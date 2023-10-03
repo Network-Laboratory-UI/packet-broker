@@ -19,8 +19,10 @@
 
 #define HTTP_GET_MAGIC "GET /"
 #define HTTP_GET_MAGIC_LEN 5
-#define TLS_CLIENT_HELLO_MAGIC "\x16\x03\x01"
-#define TLS_CLIENT_HELLO_MAGIC_LEN 3
+#define TLS_MAGIC "\x16\x03\x01"
+#define TLS_MAGIC_LEN 3
+#define TLS_CLIENT_HELLO_MAGIC "\x01"
+#define TLS_CLIENT_HELLO_MAGIC_LEN 1
 
 // PORT INITIALIZATION
 static inline int
@@ -157,6 +159,16 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 
 				// Check if the payload contains a TLS handshake message
 				// TODO: Create a TLS code
+				if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
+				{
+					if (tcp_payload[5] == 1)
+					{
+						printf("TLS request detected\n");
+						// TODO: get the portId from options
+						rte_eth_tx_burst(0, 0, pkt, nb_rx);
+						return;
+					}
+				}
 			}
 		}
 	}
