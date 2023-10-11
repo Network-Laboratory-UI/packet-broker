@@ -1,6 +1,20 @@
+// C library
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 #include <inttypes.h>
+#include <sys/types.h>
+#include <sys/queue.h>
+#include <setjmp.h>
+#include <stdarg.h>
+#include <ctype.h>
+#include <errno.h>
+#include <getopt.h>
+#include <signal.h>
+#include <stdbool.h>
+
+// DPDK library
 #include <rte_eal.h>
 #include <rte_ethdev.h>
 #include <rte_cycles.h>
@@ -8,21 +22,89 @@
 #include <rte_mbuf.h>
 #include <rte_tcp.h>
 
+// Define the limit of
 #define MAX_PACKET_LEN 1500
 #define RX_RING_SIZE 1024
 #define TX_RING_SIZE 1024
-
 #define NUM_MBUFS 8191
 #define MBUF_CACHE_SIZE 250
 #define BURST_SIZE 32
 #define MAX_TCP_PAYLOAD_LEN 1024
 
+// Define HTTP GET and TLS CLIENT HELLO Pattern
 #define HTTP_GET_MAGIC "GET /"
 #define HTTP_GET_MAGIC_LEN 5
 #define TLS_MAGIC "\x16\x03\x01"
 #define TLS_MAGIC_LEN 3
 #define TLS_CLIENT_HELLO_MAGIC "\x01"
 #define TLS_CLIENT_HELLO_MAGIC_LEN 1
+
+// Force quit variable
+static volatile bool force_quit;
+
+// Port statistic struct
+struct port_statistics_data
+{
+	uint64_t tx;
+	uint64_t rx;
+	uint64_t dropped;
+	uint16_t httpMatch;
+	uint16_t httpsMatch;
+} __rte_cache_aligned;
+struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
+
+// Timer period for statistics
+static uint64_t timer_period = 100;
+
+// PRINT OUT STATISTICS
+static void
+print_stats(void)
+{
+	uint64_t total_packets_dropped, total_packets_tx, total_packets_rx;
+	unsigned int portid;
+
+	total_packets_dropped = 0;
+	total_packets_tx = 0;
+	total_packets_rx = 0;
+
+	const char clr[] = {27, '[', '2', 'J', '\0'};
+	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
+
+	/* Clear screen and move to top left */
+	printf("%s%s", clr, topLeft);
+
+	printf("\nPort statistics ====================================");
+
+	for (portid = 0; portid < 2; portid++)
+	{
+		printf("\nStatistics for port %u ------------------------------"
+			   "\nPackets sent: %24" PRIu64
+			   "\nPackets received: %20" PRIu64
+			   "\nPackets dropped: %21" PRIu64
+			   "\nHTTP GET MATCH: %22" PRIu64
+			   "\nTLS CLIENT HELLO MATCH: %14" PRIu64,
+			   portid,
+			   port_statistics[portid].tx,
+			   port_statistics[portid].rx,
+			   port_statistics[portid].dropped,
+			   port_statistics[portid].httpMatch,
+			   port_statistics[portid].httpsMatch);
+
+		total_packets_dropped += port_statistics[portid].dropped;
+		total_packets_tx += port_statistics[portid].tx;
+		total_packets_rx += port_statistics[portid].rx;
+	}
+	printf("\nAggregate statistics ==============================="
+		   "\nTotal packets sent: %18" PRIu64
+		   "\nTotal packets received: %14" PRIu64
+		   "\nTotal packets dropped: %15" PRIu64,
+		   total_packets_tx,
+		   total_packets_rx,
+		   total_packets_dropped);
+	printf("\n====================================================\n");
+
+	fflush(stdout);
+}
 
 // PORT INITIALIZATION
 static inline int
@@ -111,8 +193,11 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 }
 // END OF PORT INITIALIZATION
 
+// PACKET PROCESSING AND CHECKING
 static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 {
+	// Define Variable
+	int sent;
 
 	// Parse Ethernet header
 	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
@@ -143,30 +228,33 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 				// Limit the copy to avoid buffer overflow
 				snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
 
-				// for (int i = 0; i < tcp_payload_len; i++)
-				// {
-				// 	printf("%02X ", (unsigned char)tcp_payload[i]);
-				// }
-				// printf("\n");
-
 				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 				{
-					printf("HTTP GET request detected\n");
 					// TODO: get the portId from options
-					rte_eth_tx_burst(0, 0, pkt, nb_rx);
-					return;
+					sent = rte_eth_tx_burst(0, 0, pkt, nb_rx);
+
+					// HTTP TX Statistics
+					if (sent)
+					{
+						port_statistics[0].tx += sent;
+						port_statistics[0].httpMatch += sent;
+					}
 				}
 
 				// Check if the payload contains a TLS handshake message
-				// TODO: Create a TLS code
 				if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
 				{
 					if (tcp_payload[5] == 1)
 					{
-						printf("TLS request detected\n");
 						// TODO: get the portId from options
-						rte_eth_tx_burst(0, 0, pkt, nb_rx);
-						return;
+						sent = rte_eth_tx_burst(0, 0, pkt, nb_rx);
+
+						// HTTPS TX Statistics
+						if (sent)
+						{
+							port_statistics[0].tx += sent;
+							port_statistics[0].httpsMatch += sent;
+						}
 					}
 				}
 			}
@@ -176,11 +264,14 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 	// Free the packet buffer when done processing
 	rte_pktmbuf_free(*pkt);
 }
+// END OF PACKET PROCESSING AND CHECKING
 
-static __rte_noreturn void
+// MAIN CORE TO READ RX AND CALL THE PROCESS FUNCTION
+static inline void
 lcore_main(void)
 {
 	uint16_t port;
+	uint64_t timer_tsc;
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -198,39 +289,82 @@ lcore_main(void)
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
 
+	timer_tsc=0;
+
 	// Main work of application loop
-	for (;;)
+	while (!force_quit)
 	{
-		/* Get burst of RX packets, from first port of pair. */
+		// Get burst of RX packets, from first port of pair
 		struct rte_mbuf *bufs[BURST_SIZE];
 		// TODO: get the portId from options
 		const uint16_t nb_rx = rte_eth_rx_burst(1, 0,
 												bufs, BURST_SIZE);
+
+		// Statistic for RX
+		port_statistics[1].rx += nb_rx;
+		port_statistics[1].tx = 0;
 
 		if (unlikely(nb_rx == 0))
 			continue;
 
 		// process the packet
 		process_packet(bufs, nb_rx);
-	}
-	/* >8 End of loop. */
-}
-/* >8 End Basic forwarding application lcore. */
 
+		/* if timer is enabled */
+		if (timer_period > 0)
+		{
+
+			/* advance the timer */
+			timer_tsc ++;
+
+			/* if timer has reached its timeout */
+			if (timer_tsc >= timer_period)
+			{
+
+				/* do this only on main core */
+				print_stats();
+				/* reset the timer */
+				timer_tsc = 0;
+			}
+		}
+	}
+}
+
+// TERMINATION SIGNAL HANDLER
+static void
+signal_handler(int signum)
+{
+	if (signum == SIGINT || signum == SIGTERM)
+	{
+		printf("\n\nSignal %d received, preparing to exit...\n",
+			   signum);
+		force_quit = true;
+	}
+}
+// END OF TERMINATION SIGNAL HANDLER
+
+// MAIN FUNCTION
 int main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool;
 	unsigned nb_ports;
 	uint16_t portid;
 
-	/* Initializion the Environment Abstraction Layer (EAL). 8< */
+	// Initializion the Environment Abstraction Layer (EAL)
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
-	/* >8 End of initialization the Environment Abstraction Layer (EAL). */
 
 	argc -= ret;
 	argv += ret;
+
+	// force quit handler
+	force_quit = false;
+	signal(SIGINT, signal_handler);
+	signal(SIGTERM, signal_handler);
+
+	// clean the data
+	memset(port_statistics,0,32*sizeof(struct port_statistics_data));
 
 	// count the number of ports to send and receive
 	nb_ports = rte_eth_dev_count_avail();
@@ -261,3 +395,5 @@ int main(int argc, char *argv[])
 	// clean up the EAL
 	rte_eal_cleanup();
 }
+
+// END OF MAIN FUNCTION
