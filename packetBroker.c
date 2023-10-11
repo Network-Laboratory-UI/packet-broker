@@ -31,7 +31,12 @@
 #define BURST_SIZE 32
 #define MAX_TCP_PAYLOAD_LEN 1024
 
+// Define the type of filter
+#define HTTP_GET 112
+#define TLS_CLIENT_HELLO 212
+
 // Define HTTP GET and TLS CLIENT HELLO Pattern
+// add MAGIC for the pattern and MAGIC_LEN for the byte length on variable name
 #define HTTP_GET_MAGIC "GET /"
 #define HTTP_GET_MAGIC_LEN 5
 #define TLS_MAGIC "\x16\x03\x01"
@@ -42,6 +47,11 @@
 // Force quit variable
 static volatile bool force_quit;
 
+// Timer period for statistics
+static uint64_t timer_period = 100;
+
+// Create struct for packet broker identifier
+
 // Port statistic struct
 struct port_statistics_data
 {
@@ -50,11 +60,9 @@ struct port_statistics_data
 	uint64_t dropped;
 	uint16_t httpMatch;
 	uint16_t httpsMatch;
+	// TODO: add size of packet, throughpout.
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
-
-// Timer period for statistics
-static uint64_t timer_period = 100;
 
 // PRINT OUT STATISTICS
 static void
@@ -194,7 +202,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 // END OF PORT INITIALIZATION
 
 // PACKET PROCESSING AND CHECKING
-static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
+static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 {
 	// Define Variable
 	int sent;
@@ -230,15 +238,7 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 
 				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 				{
-					// TODO: get the portId from options
-					sent = rte_eth_tx_burst(0, 0, pkt, nb_rx);
-
-					// HTTP TX Statistics
-					if (sent)
-					{
-						port_statistics[0].tx += sent;
-						port_statistics[0].httpMatch += sent;
-					}
+					return HTTP_GET;
 				}
 
 				// Check if the payload contains a TLS handshake message
@@ -246,23 +246,24 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 				{
 					if (tcp_payload[5] == 1)
 					{
-						// TODO: get the portId from options
-						sent = rte_eth_tx_burst(0, 0, pkt, nb_rx);
-
-						// HTTPS TX Statistics
-						if (sent)
-						{
-							port_statistics[0].tx += sent;
-							port_statistics[0].httpsMatch += sent;
-						}
+						return TLS_CLIENT_HELLO;
 					}
 				}
+
+				// return if there is no match
+				return 0;
 			}
+
+			// return if there is no payload
+			return 0;
 		}
+
+		// return if there is no TCP packet
+		return 0;
 	}
 
-	// Free the packet buffer when done processing
-	rte_pktmbuf_free(*pkt);
+	// return if there is no IP packet
+	return 0;
 }
 // END OF PACKET PROCESSING AND CHECKING
 
@@ -270,8 +271,11 @@ static void process_packet(struct rte_mbuf **pkt, uint16_t nb_rx)
 static inline void
 lcore_main(void)
 {
+	// initialization
 	uint16_t port;
 	uint64_t timer_tsc;
+	uint64_t packet_type;
+	uint16_t sent;
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -289,7 +293,7 @@ lcore_main(void)
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
 
-	timer_tsc=0;
+	timer_tsc = 0;
 
 	// Main work of application loop
 	while (!force_quit)
@@ -304,18 +308,51 @@ lcore_main(void)
 		port_statistics[1].rx += nb_rx;
 		port_statistics[1].tx = 0;
 
+		// if there is no packet, continue
 		if (unlikely(nb_rx == 0))
 			continue;
 
 		// process the packet
-		process_packet(bufs, nb_rx);
+		packet_type = packet_checker(bufs, nb_rx);
+
+		// function to check the packet type and send it to the right port
+		if (packet_type == HTTP_GET)
+		{
+			// send the packet to port 0 if HTTP GET
+			sent = rte_eth_tx_burst(0, 0, bufs, nb_rx);
+
+			// update the statistics
+			if (sent)
+			{
+				port_statistics[0].tx += sent;
+				port_statistics[0].httpMatch += sent;
+			}
+		}
+		else if (packet_type == TLS_CLIENT_HELLO)
+		{
+			// send the packet to port 0 if TLS CLIENT HELLO
+			sent = rte_eth_tx_burst(0, 0, bufs, nb_rx);
+
+			// update the statistics
+			if (sent)
+			{
+				port_statistics[0].tx += sent;
+				port_statistics[0].httpsMatch += sent;
+			}
+		}else{
+			// free up the buffer
+			rte_pktmbuf_free(*bufs);
+		}
+
+		// free up the buffer
+		rte_pktmbuf_free(*bufs);
 
 		/* if timer is enabled */
 		if (timer_period > 0)
 		{
 
 			/* advance the timer */
-			timer_tsc ++;
+			timer_tsc++;
 
 			/* if timer has reached its timeout */
 			if (timer_tsc >= timer_period)
@@ -364,7 +401,7 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, signal_handler);
 
 	// clean the data
-	memset(port_statistics,0,32*sizeof(struct port_statistics_data));
+	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
 
 	// count the number of ports to send and receive
 	nb_ports = rte_eth_dev_count_avail();
