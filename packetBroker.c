@@ -404,13 +404,13 @@ lcore_main(void)
 			port_statistics[1].rx_size += rte_pktmbuf_pkt_len(bufs[i]);
 
 			// check the packet type
-			packet_type = packet_checker(&bufs[i], nb_rx);
+			packet_type = packet_checker(&bufs[i], 1);
 
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
 			{
 				// send the packet to port 0 if HTTP GET
-				sent = rte_eth_tx_burst(0, 0, &bufs[i], nb_rx);
+				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
 
 				// dump packet
 				dump_packet(bufs[i], f_dump);
@@ -426,7 +426,7 @@ lcore_main(void)
 			else if (packet_type == TLS_CLIENT_HELLO)
 			{
 				// send the packet to port 0 if TLS CLIENT HELLO
-				sent = rte_eth_tx_burst(0, 0, &bufs[i], nb_rx);
+				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
 
 				// dump packet
 				dump_packet(bufs[i], f_dump);
