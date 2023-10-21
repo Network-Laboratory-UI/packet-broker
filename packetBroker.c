@@ -62,9 +62,9 @@
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint16_t timer_period = 100;			// 100 Cycle
-static uint16_t timer_period_stats = 1; 	// 1 minutes
-static uint16_t timer_period_send = 10; 	// 10 minutes
+static uint16_t timer_period = 100;		// 100 Cycle
+static uint16_t timer_period_stats = 1; // 1 minutes
+static uint16_t timer_period_send = 10; // 10 minutes
 
 // TDOO: Create struct for packet broker identifier
 
@@ -246,8 +246,14 @@ print_stats(void)
 	fflush(stdout);
 }
 
-static void print_stats_csv_header(FILE *f){
+static void print_stats_csv_header(FILE *f)
+{
 	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
+}
+
+// PRINT PACKET DATA
+static void print_packet_data(){
+
 }
 
 // PRINT STATISTICS INTO CSV FILE
@@ -284,6 +290,11 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 			// Parse TCP header
 			struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
 
+			if (tcp_hdr->tcp_flags == RTE_TCP_RST_FLAG)
+			{
+				printf("RST PACKET GOOD IN HERE\n");
+			}
+
 			// Calculate TCP payload length
 			uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
 
@@ -292,11 +303,16 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 
 			// Convert the TCP payload to a string (char array)
 			char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-			if (tcp_payload_len > 0)
+			if (tcp_hdr->tcp_flags == (RTE_TCP_PSH_FLAG | RTE_TCP_ACK_FLAG) && tcp_payload_len > 0)
 			{
 				// Copy the TCP payload into the string
 				// Limit the copy to avoid buffer overflow
 				snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
+
+				// if (tcp_hdr->tcp_flags == RTE_TCP_RST_FLAG)
+				// {
+				// 	printf("RST PACKET BAD IN HERE\n");
+				// }
 
 				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 				{
@@ -461,10 +477,9 @@ lcore_main(void)
 			strftime(time_str, sizeof(time_str), format, tm_info);
 			print_stats_csv(f_stat, time_str);
 			fflush(f_stat);
-			//clear_stats();
+			// clear_stats();
 			last_run_minute = current_minute;
 		}
-
 
 		/* if timer is enabled */
 		if (timer_period > 0)
