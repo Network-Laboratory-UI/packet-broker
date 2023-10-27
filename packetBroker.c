@@ -37,11 +37,9 @@
 #define BURST_SIZE 32
 #define MAX_TCP_PAYLOAD_LEN 1024
 
-// Define the dump file name
-#define PCAP_FILE "packet_forwarded.txt"
-
 // Define the statistics file name
-#define STAT_FILE "statistics.csv"
+#define STAT_FILE "stats/stats"
+#define STAT_FILE_EXT ".csv"
 
 // Define period to print stats
 
@@ -63,8 +61,8 @@ static volatile bool force_quit;
 
 // Timer period for statistics
 static uint16_t timer_period = 100;		// 100 Cycle
-static uint16_t timer_period_stats = 1; // 1 minutes
-static uint16_t timer_period_send = 10; // 10 minutes
+static uint16_t timer_period_stats = 1; // 1 second
+static uint16_t timer_period_send = 1; // 10 minutes
 
 // TDOO: Create struct for packet broker identifier
 
@@ -183,12 +181,6 @@ static FILE *open_file(const char *filename)
 	return f;
 }
 
-// DUMP PACKET
-static void dump_packet(struct rte_mbuf *pkt, FILE *f_dump)
-{
-	rte_pktmbuf_dump(f_dump, pkt, rte_pktmbuf_pkt_len(pkt));
-}
-
 // PRINT OUT STATISTICS
 static void
 print_stats(void)
@@ -205,10 +197,10 @@ print_stats(void)
 
 	// Clear screen and move to top left
 	printf("%s%s", clr, topLeft);
-
-	printf("\nRefreshed every %d minute. "
-		   "Hit CTRL+C to quit.\n",
-		   timer_period_stats);
+	printf("PACKET BORKER\n");
+	printf("\nRefreshed every %d seconds. "
+		   "Send every %d minutes.\n",
+		   timer_period_stats, timer_period_send);
 	printf("\nPort statistics ====================================");
 
 	for (portid = 0; portid < 2; portid++)
@@ -252,8 +244,8 @@ static void print_stats_csv_header(FILE *f)
 }
 
 // PRINT PACKET DATA
-static void print_packet_data(){
-
+static void print_packet_data()
+{
 }
 
 // PRINT STATISTICS INTO CSV FILE
@@ -290,11 +282,6 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 			// Parse TCP header
 			struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
 
-			if (tcp_hdr->tcp_flags == RTE_TCP_RST_FLAG)
-			{
-				printf("RST PACKET GOOD IN HERE\n");
-			}
-
 			// Calculate TCP payload length
 			uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
 
@@ -308,11 +295,6 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 				// Copy the TCP payload into the string
 				// Limit the copy to avoid buffer overflow
 				snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
-
-				// if (tcp_hdr->tcp_flags == RTE_TCP_RST_FLAG)
-				// {
-				// 	printf("RST PACKET BAD IN HERE\n");
-				// }
 
 				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 				{
@@ -367,17 +349,15 @@ lcore_main(void)
 	uint64_t timer_tsc = 0;
 	uint64_t packet_type;
 	uint16_t sent;
-	int last_run_minute = 100;
-	int current_minute;
+	int last_run_stat = 0;
+	int last_run_file = 0;
+	int current_sec;
 	char time_str[80];
+	char time_str_file[80];
 	const char *format = "%Y-%m-%dT%H:%M:%S";
-	FILE *f_dump = open_file(PCAP_FILE);
-	FILE *f_stat = open_file(STAT_FILE);
-	struct tm *tm_info;
-	time_t now;
-
-	// print the header of the statistics file
-	print_stats_csv_header(f_stat);
+	FILE *f_stat = NULL;
+	struct tm *tm_info, *tm_rounded;
+	time_t now, rounded;
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -428,9 +408,6 @@ lcore_main(void)
 				// send the packet to port 0 if HTTP GET
 				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
 
-				// dump packet
-				dump_packet(bufs[i], f_dump);
-
 				// update the statistics
 				if (sent)
 				{
@@ -443,9 +420,6 @@ lcore_main(void)
 			{
 				// send the packet to port 0 if TLS CLIENT HELLO
 				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
-
-				// dump packet
-				dump_packet(bufs[i], f_dump);
 
 				// update the statistics
 				if (sent)
@@ -471,14 +445,61 @@ lcore_main(void)
 		// Print Statistcs to file
 		time(&now);
 		tm_info = localtime(&now);
-		current_minute = tm_info->tm_min;
-		if (current_minute % timer_period_stats == 0 && current_minute != last_run_minute)
+		current_sec = tm_info->tm_sec;
+		if (current_sec % timer_period_stats == 0 && current_sec != last_run_stat)
 		{
+			char *filename = (char *)calloc(100, 100);
+
+			// get the current minute
+			int current_min = tm_info->tm_min;
+
+			// check file
+			if (!f_stat)
+			{
+				int remaining_seconds = current_min % timer_period_send * 60 + current_sec;
+				rounded = now - remaining_seconds;
+				tm_rounded = localtime(&rounded);
+				strftime(time_str_file, sizeof(time_str_file), format, tm_rounded);
+				strcat(filename, STAT_FILE);
+				strcat(filename, time_str_file);
+				strcat(filename, STAT_FILE_EXT);
+				f_stat = open_file(filename);
+				// print the header of the statistics file
+				print_stats_csv_header(f_stat);
+				// free the string
+				free(filename);
+				last_run_file = tm_rounded->tm_min;
+			}
+
+			// convert the time to string
 			strftime(time_str, sizeof(time_str), format, tm_info);
+
+			// print out the stats to csv
 			print_stats_csv(f_stat, time_str);
 			fflush(f_stat);
-			// clear_stats();
-			last_run_minute = current_minute;
+
+			// clear the stats
+			clear_stats();
+
+			if (current_min % timer_period_send == 0 && current_min != last_run_file)
+			{
+				strcat(filename, STAT_FILE);
+				strcat(filename, time_str);
+				strcat(filename, STAT_FILE_EXT);
+				f_stat = open_file(filename);
+
+				// print the header of the statistics file
+				print_stats_csv_header(f_stat);
+
+				// free the string
+				free(filename);
+
+				// set the last run file
+				last_run_file = current_min;
+			}
+
+			// Set the last run time
+			last_run_stat = current_sec;
 		}
 
 		/* if timer is enabled */
