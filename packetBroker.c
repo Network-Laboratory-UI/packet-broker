@@ -269,7 +269,7 @@ static void clear_stats(void)
 // CONFIG FILE LOADER
 int load_config_file()
 {
-	FILE *configFile = fopen("packetBroker.cfg", "r");
+	FILE *configFile = fopen("config/packetBroker.cfg", "r");
 	if (configFile == NULL) {
         printf("Error opening configuration file");
         return 1;
