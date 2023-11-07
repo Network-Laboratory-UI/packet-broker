@@ -269,9 +269,9 @@ static void clear_stats(void)
 // CONFIG FILE LOADER
 int load_config_file()
 {
-	FILE *configFile = fopen("config/packetBroker.cfg", "r");
-	if (!configFile) {
-        perror("Error opening configuration file");
+	FILE *configFile = fopen("packetBroker.cfg", "r");
+	if (configFile == NULL) {
+        printf("Error opening configuration file");
         return 1;
     }
 
@@ -281,21 +281,43 @@ int load_config_file()
 
 	while (fgets(line, sizeof(line), configFile)) {
         if (sscanf(line, "%255[^=]= %255[^\n]", key, value) == 2) {
-            if (strcmp(key, "db_host") == 0) {
-                printf("Database Host: %s\n", value);
-            } else if (strcmp(key, "db_port") == 0) {
-                printf("Database Port: %s\n", value);
-            } else if (strcmp(key, "db_name") == 0) {
-                printf("Database Name: %s\n", value);
-            } else if (strcmp(key, "db_user") == 0) {
-                printf("Database User: %s\n", value);
-            } else if (strcmp(key, "db_password") == 0) {
-                printf("Database Password: %s\n", value);
-            } else if (strcmp(key, "debug_mode") == 0) {
-                printf("Debug Mode: %s\n", value);
-            } else if (strcmp(key, "log_file") == 0) {
-                printf("Log File: %s\n", value);
-            }
+            if (strcmp(key, "MAX_PACKET_LEN") == 0) {
+                MAX_PACKET_LEN = atoi(value);
+				printf("MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
+            } else if (strcmp(key, "RX_RING_SIZE") == 0) {
+                RX_RING_SIZE = atoi(value);
+				printf("RX_RING_SIZE: %d\n", RX_RING_SIZE);
+            } else if (strcmp(key, "TX_RING_SIZE") == 0) {
+                TX_RING_SIZE = atoi(value);
+				printf("TX_RING_SIZE: %d\n", TX_RING_SIZE);
+            } else if (strcmp(key, "NUM_MBUFS") == 0) {
+				NUM_MBUFS = atoi(value);
+				printf("NUM_MBUFS: %d\n", NUM_MBUFS);
+            } else if (strcmp(key, "MBUF_CACHE_SIZE") == 0) {
+				MBUF_CACHE_SIZE = atoi(value);
+				printf("MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
+            } else if (strcmp(key, "BURST_SIZE") == 0) {
+				BURST_SIZE = atoi(value);
+				printf("BURST_SIZE: %d\n", BURST_SIZE);
+            } else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0) {
+				MAX_TCP_PAYLOAD_LEN = atoi(value);
+				printf("MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
+			} else if (strcmp(key, "STAT_FILE") == 0) {
+				strcpy(STAT_FILE, value);
+				printf("STAT_FILE: %s\n", STAT_FILE);
+            } else if (strcmp(key, "STAT_FILE_EXT") == 0) {
+				strcpy(STAT_FILE_EXT, value);
+				printf("STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
+			} else if (strcmp(key, "TIMER_PERIOD") == 0) {
+				TIMER_PERIOD = atoi(value);
+				printf("TIMER_PERIOD: %d\n", TIMER_PERIOD);
+			} else if (strcmp(key, "TIMER_PERIOD_STATS") == 0) {
+				TIMER_PERIOD_STATS = atoi(value);
+				printf("TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
+			} else if (strcmp(key, "TIMER_PERIOD_SEND") == 0) {
+				TIMER_PERIOD_SEND = atoi(value);
+				printf("TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
+			}
         }
     }
 
@@ -578,6 +600,11 @@ int main(int argc, char *argv[])
 	struct rte_mempool *mbuf_pool;
 	unsigned nb_ports;
 	uint16_t portid;
+
+	// load the config file
+	if(load_config_file()){
+		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
+	}
 
 	// Initializion the Environment Abstraction Layer (EAL)
 	int ret = rte_eal_init(argc, argv);
