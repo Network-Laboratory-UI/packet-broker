@@ -29,17 +29,26 @@
 // ======================================================= THE DEFINE =======================================================
 
 // Define the limit of
-#define MAX_PACKET_LEN 1500
-#define RX_RING_SIZE 1024
-#define TX_RING_SIZE 1024
-#define NUM_MBUFS 8191
-#define MBUF_CACHE_SIZE 250
-#define BURST_SIZE 32
-#define MAX_TCP_PAYLOAD_LEN 1024
+// #define MAX_PACKET_LEN 1500
+// #define RX_RING_SIZE 1024
+// #define TX_RING_SIZE 1024
+// #define NUM_MBUFS 8191
+// #define MBUF_CACHE_SIZE 250
+// #define BURST_SIZE 32
+// #define MAX_TCP_PAYLOAD_LEN 1024
+uint32_t MAX_PACKET_LEN;
+uint32_t RX_RING_SIZE;
+uint32_t TX_RING_SIZE;
+uint32_t NUM_MBUFS;
+uint32_t MBUF_CACHE_SIZE;
+uint32_t BURST_SIZE;
+uint32_t MAX_TCP_PAYLOAD_LEN;
 
 // Define the statistics file name
-#define STAT_FILE "stats/stats"
-#define STAT_FILE_EXT ".csv"
+// #define STAT_FILE "stats/stats"
+// #define STAT_FILE_EXT ".csv"
+char STAT_FILE[100];
+char STAT_FILE_EXT[100];
 
 // Define period to print stats
 
@@ -60,9 +69,9 @@
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint16_t timer_period = 100;		// 100 Cycle
-static uint16_t timer_period_stats = 1; // 1 second
-static uint16_t timer_period_send = 1; // 10 minutes
+static uint16_t TIMER_PERIOD;			// 100 Cycle
+static uint16_t TIMER_PERIOD_STATS; 	// 1 second
+static uint16_t TIMER_PERIOD_SEND; 		// 10 minutes
 
 // TDOO: Create struct for packet broker identifier
 
@@ -200,7 +209,7 @@ print_stats(void)
 	printf("PACKET BORKER\n");
 	printf("\nRefreshed every %d seconds. "
 		   "Send every %d minutes.\n",
-		   timer_period_stats, timer_period_send);
+		   TIMER_PERIOD_STATS, TIMER_PERIOD_SEND);
 	printf("\nPort statistics ====================================");
 
 	for (portid = 0; portid < 2; portid++)
@@ -238,14 +247,10 @@ print_stats(void)
 	fflush(stdout);
 }
 
+// PRINT STATISTICS HEADER INTO CSV FILE
 static void print_stats_csv_header(FILE *f)
 {
 	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
-}
-
-// PRINT PACKET DATA
-static void print_packet_data()
-{
 }
 
 // PRINT STATISTICS INTO CSV FILE
@@ -260,6 +265,44 @@ static void clear_stats(void)
 {
 	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 }
+
+// CONFIG FILE LOADER
+int load_config_file()
+{
+	FILE *configFile = fopen("config/packetBroker.cfg", "r");
+	if (!configFile) {
+        perror("Error opening configuration file");
+        return 1;
+    }
+
+	char line[256];
+    char key[256];
+    char value[256];
+
+	while (fgets(line, sizeof(line), configFile)) {
+        if (sscanf(line, "%255[^=]= %255[^\n]", key, value) == 2) {
+            if (strcmp(key, "db_host") == 0) {
+                printf("Database Host: %s\n", value);
+            } else if (strcmp(key, "db_port") == 0) {
+                printf("Database Port: %s\n", value);
+            } else if (strcmp(key, "db_name") == 0) {
+                printf("Database Name: %s\n", value);
+            } else if (strcmp(key, "db_user") == 0) {
+                printf("Database User: %s\n", value);
+            } else if (strcmp(key, "db_password") == 0) {
+                printf("Database Password: %s\n", value);
+            } else if (strcmp(key, "debug_mode") == 0) {
+                printf("Debug Mode: %s\n", value);
+            } else if (strcmp(key, "log_file") == 0) {
+                printf("Log File: %s\n", value);
+            }
+        }
+    }
+
+	fclose(configFile);
+    return 0;
+}
+
 
 // PACKET PROCESSING AND CHECKING
 static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
@@ -446,7 +489,7 @@ lcore_main(void)
 		time(&now);
 		tm_info = localtime(&now);
 		current_sec = tm_info->tm_sec;
-		if (current_sec % timer_period_stats == 0 && current_sec != last_run_stat)
+		if (current_sec % TIMER_PERIOD_STATS == 0 && current_sec != last_run_stat)
 		{
 			char *filename = (char *)calloc(100, 100);
 
@@ -456,16 +499,23 @@ lcore_main(void)
 			// check file
 			if (!f_stat)
 			{
-				int remaining_seconds = current_min % timer_period_send * 60 + current_sec;
+				// get the rounded time
+				int remaining_seconds = current_min % TIMER_PERIOD_SEND * 60 + current_sec;
 				rounded = now - remaining_seconds;
 				tm_rounded = localtime(&rounded);
+
+				// convert the time to string
 				strftime(time_str_file, sizeof(time_str_file), format, tm_rounded);
+
+				// create the filename
 				strcat(filename, STAT_FILE);
 				strcat(filename, time_str_file);
 				strcat(filename, STAT_FILE_EXT);
 				f_stat = open_file(filename);
+
 				// print the header of the statistics file
 				print_stats_csv_header(f_stat);
+
 				// free the string
 				free(filename);
 				last_run_file = tm_rounded->tm_min;
@@ -481,8 +531,9 @@ lcore_main(void)
 			// clear the stats
 			clear_stats();
 
-			if (current_min % timer_period_send == 0 && current_min != last_run_file)
+			if (current_min % TIMER_PERIOD_SEND == 0 && current_min != last_run_file)
 			{
+				// create the filename
 				strcat(filename, STAT_FILE);
 				strcat(filename, time_str);
 				strcat(filename, STAT_FILE_EXT);
@@ -503,14 +554,14 @@ lcore_main(void)
 		}
 
 		/* if timer is enabled */
-		if (timer_period > 0)
+		if (TIMER_PERIOD > 0)
 		{
 
 			/* advance the timer */
 			timer_tsc++;
 
 			/* if timer has reached its timeout */
-			if (timer_tsc >= timer_period)
+			if (timer_tsc >= TIMER_PERIOD)
 			{
 				/* do this only on main core */
 				print_stats();
