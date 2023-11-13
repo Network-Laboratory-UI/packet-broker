@@ -181,7 +181,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 // OPEN FILE
 static FILE *open_file(const char *filename)
 {
-	FILE *f = fopen(filename, "w");
+	FILE *f = fopen(filename, "a+");
 	if (f == NULL)
 	{
 		printf("Error opening file!\n");
@@ -405,6 +405,88 @@ signal_handler(int signum)
 }
 // END OF TERMINATION SIGNAL HANDLER
 
+// PRINT STATISTICS PROCESS
+static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat){
+	int current_sec;
+	char time_str[80];
+	char time_str_file[80];
+	const char *format = "%Y-%m-%dT%H:%M:%S";
+	struct tm *tm_info, *tm_rounded;
+	time_t now, rounded;
+
+	time(&now);
+	tm_info = localtime(&now);
+	current_sec = tm_info->tm_sec;
+	if (current_sec % TIMER_PERIOD_STATS == 0 && current_sec != *last_run_stat)
+	{
+		char *filename = (char *)calloc(100, 100);
+
+		// get the current minute
+		int current_min = tm_info->tm_min;
+
+		// check file
+		if (!*f_stat)
+		{
+			// get the rounded time
+			int remaining_seconds = current_min % TIMER_PERIOD_SEND * 60 + current_sec;
+			rounded = now - remaining_seconds;
+			tm_rounded = localtime(&rounded);
+
+			// convert the time to string
+			strftime(time_str_file, sizeof(time_str_file), format, tm_rounded);
+
+			// create the filename
+			strcat(filename, STAT_FILE);
+			strcat(filename, time_str_file);
+			strcat(filename, STAT_FILE_EXT);
+			printf("first open file");
+			*f_stat = open_file(filename);
+
+			// print the header of the statistics file
+			print_stats_csv_header(*f_stat);
+
+			// free the string
+			free(filename);
+			*last_run_file = tm_rounded->tm_min;
+			
+			//Set the time to now
+			tm_info = localtime(&now); // TODO: not efficient because already called before
+		}
+
+		// convert the time to string
+		strftime(time_str, sizeof(time_str), format, tm_info);
+
+		// print out the stats to csv
+		print_stats_csv(*f_stat, time_str);
+		fflush(*f_stat);
+
+		// clear the stats
+		clear_stats();
+
+		if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_file)
+		{
+			// create the filename
+			strcat(filename, STAT_FILE);
+			strcat(filename, time_str);
+			strcat(filename, STAT_FILE_EXT);
+			printf("open file");
+			*f_stat = open_file(filename);
+
+			// print the header of the statistics file
+			print_stats_csv_header(*f_stat);
+
+			// free the string
+			free(filename);
+
+			// set the last run file
+			*last_run_file = current_min;
+		}
+
+		// Set the last run time
+		*last_run_stat = current_sec;
+	}
+}
+
 // ======================================================= THE LCORE FUNCTION =======================================================
 static inline void
 lcore_main(void)
@@ -416,13 +498,7 @@ lcore_main(void)
 	uint16_t sent;
 	int last_run_stat = 0;
 	int last_run_file = 0;
-	int current_sec;
-	char time_str[80];
-	char time_str_file[80];
-	const char *format = "%Y-%m-%dT%H:%M:%S";
 	FILE *f_stat = NULL;
-	struct tm *tm_info, *tm_rounded;
-	time_t now, rounded;
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -508,72 +584,7 @@ lcore_main(void)
 		rte_pktmbuf_free(*bufs);
 
 		// Print Statistcs to file
-		time(&now);
-		tm_info = localtime(&now);
-		current_sec = tm_info->tm_sec;
-		if (current_sec % TIMER_PERIOD_STATS == 0 && current_sec != last_run_stat)
-		{
-			char *filename = (char *)calloc(100, 100);
-
-			// get the current minute
-			int current_min = tm_info->tm_min;
-
-			// check file
-			if (!f_stat)
-			{
-				// get the rounded time
-				int remaining_seconds = current_min % TIMER_PERIOD_SEND * 60 + current_sec;
-				rounded = now - remaining_seconds;
-				tm_rounded = localtime(&rounded);
-
-				// convert the time to string
-				strftime(time_str_file, sizeof(time_str_file), format, tm_rounded);
-
-				// create the filename
-				strcat(filename, STAT_FILE);
-				strcat(filename, time_str_file);
-				strcat(filename, STAT_FILE_EXT);
-				f_stat = open_file(filename);
-
-				// print the header of the statistics file
-				print_stats_csv_header(f_stat);
-
-				// free the string
-				free(filename);
-				last_run_file = tm_rounded->tm_min;
-			}
-
-			// convert the time to string
-			strftime(time_str, sizeof(time_str), format, tm_info);
-
-			// print out the stats to csv
-			print_stats_csv(f_stat, time_str);
-			fflush(f_stat);
-
-			// clear the stats
-			clear_stats();
-
-			if (current_min % TIMER_PERIOD_SEND == 0 && current_min != last_run_file)
-			{
-				// create the filename
-				strcat(filename, STAT_FILE);
-				strcat(filename, time_str);
-				strcat(filename, STAT_FILE_EXT);
-				f_stat = open_file(filename);
-
-				// print the header of the statistics file
-				print_stats_csv_header(f_stat);
-
-				// free the string
-				free(filename);
-
-				// set the last run file
-				last_run_file = current_min;
-			}
-
-			// Set the last run time
-			last_run_stat = current_sec;
-		}
+		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
 
 		/* if timer is enabled */
 		if (TIMER_PERIOD > 0)
