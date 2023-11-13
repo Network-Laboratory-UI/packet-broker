@@ -12,49 +12,112 @@
 // ======================================================= THE DEFINE =======================================================
 
 // Define constants
-#define MAX_LINE_LENGTH 1024
-#define CSV_FILE_PREFIX "stats"
-#define CSV_FILE_EXTENSION ".csv"
-#define MAX_FILES_TO_STORE 1000
-#define MAX_FILE_NAME_LENGTH 128
+// #define MAX_LINE_LENGTH 1024
+// #define CSV_FILE_PREFIX "stats"
+// #define CSV_FILE_EXTENSION ".csv"
+// #define MAX_FILES_TO_STORE 1000
+// #define MAX_FILE_NAME_LENGTH 128
+u_int32_t MAX_LINE_LENGTH;
+u_int32_t MAX_FILES_TO_STORE;
+u_int32_t MAX_FILE_NAME_LENGTH;
+char CSV_FILE_PREFIX[128];
+char CSV_FILE_EXTENSION[128];
 
 // Time period in minutes to send data to the API
-#define TIME_PERIOD_SEND 1
+// #define TIME_PERIOD_SEND 1
+u_int32_t TIME_PERIOD_SEND;
 
 // Aggregator Statistics
 struct aggregator_statistics_data
 {
-	int file_send;
+    int file_send;
     int data_send;
-	int file_pending;
+    int file_pending;
 };
 struct aggregator_statistics_data aggregator_statistics;
+
+// LOAD CONFIG FILE
+int load_config_file()
+{
+    FILE *configFile = fopen("config/aggregator.cfg", "r");
+    if (configFile == NULL)
+    {
+        printf("Error opening configuration file");
+        return 1;
+    }
+
+    char line[256];
+    char key[256];
+    char value[256];
+
+    while (fgets(line, sizeof(line), configFile))
+    {
+        if (sscanf(line, "%255[^=]= %255[^\n]", key, value) == 2)
+        {
+            if (strcmp(key, "MAX_LINE_LENGTH") == 0)
+            {
+                MAX_LINE_LENGTH = atoi(value);
+                printf("MAX_LINE_LENGTH: %d\n", MAX_LINE_LENGTH);
+            }
+            else if (strcmp(key, "MAX_FILES_TO_STORE") == 0)
+            {
+                MAX_FILES_TO_STORE = atoi(value);
+                printf("MAX_FILES_TO_STORE: %d\n", MAX_FILES_TO_STORE);
+            }
+            else if (strcmp(key, "MAX_FILE_NAME_LENGTH") == 0)
+            {
+                MAX_FILE_NAME_LENGTH = atoi(value);
+                printf("MAX_FILE_NAME_LENGTH: %d\n", MAX_FILE_NAME_LENGTH);
+            }
+            else if (strcmp(key, "CSV_FILE_PREFIX") == 0)
+            {
+                strcpy(CSV_FILE_PREFIX, value);
+                printf("CSV_FILE_PREFIX: %s\n", CSV_FILE_PREFIX);
+            }
+            else if (strcmp(key, "CSV_FILE_EXTENSION") == 0)
+            {
+                strcpy(CSV_FILE_EXTENSION, value);
+                printf("CSV_FILE_EXTENSION: %s\n", CSV_FILE_EXTENSION);
+            }
+            else if (strcmp(key, "TIME_PERIOD_SEND") == 0)
+            {
+                TIME_PERIOD_SEND = atoi(value);
+                printf("TIME_PERIOD_SEND: %d\n", TIME_PERIOD_SEND);
+            }
+        }
+    }
+
+    fclose(configFile);
+    return 0;
+}
 
 // PRINT OUT STATISTICS
 static void
 print_stats(void)
 {
-	const char clr[] = {27, '[', '2', 'J', '\0'};
-	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
+    const char clr[] = {27, '[', '2', 'J', '\0'};
+    const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
 
-	// Clear screen and move to top left
-	printf("%s%s", clr, topLeft);
-	printf("AGGREGATOR\n");
-	printf("\nAggregator statistics ===========================");
+    // Clear screen and move to top left
+    printf("%s%s", clr, topLeft);
+    printf("AGGREGATOR\n");
+    printf("\nAggregator statistics ===========================");
     printf("\nStatistics for aggregator ----------------------");
-    printf("\nFile sent    : %d",aggregator_statistics.file_send);
-    printf("\ndata sent    : %d",aggregator_statistics.data_send);
-    printf("\nFile Pending : %d",aggregator_statistics.file_pending);	
-	fflush(stdout);
+    printf("\nFile sent    : %d", aggregator_statistics.file_send);
+    printf("\ndata sent    : %d", aggregator_statistics.data_send);
+    printf("\nFile Pending : %d", aggregator_statistics.file_pending);
+    fflush(stdout);
 }
 
 // Function to send data to the API
-int sendToApi(json_t *jsonArray) {
-    const char* apiUrl = "http://192.168.88.251:3000/npb/npb-packet";
+int sendToApi(json_t *jsonArray)
+{
+    const char *apiUrl = "http://192.168.88.251:3000/npb/npb-packet";
     int status = 0; // Status to track if sending was successful
 
-    CURL* curl = curl_easy_init();
-    if (!curl) {
+    CURL *curl = curl_easy_init();
+    if (!curl)
+    {
         fprintf(stderr, "Failed to initialize libcurl\n");
         return 1;
     }
@@ -68,18 +131,22 @@ int sendToApi(json_t *jsonArray) {
     // Convert the JSON array to a string
     char *jsonData = json_dumps(jsonArray, 0);
 
-    if (jsonData) {
+    if (jsonData)
+    {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonData);
         // dont receive
 
         // Perform the POST request
         CURLcode res = curl_easy_perform(curl);
-        if (res != CURLE_OK) {
+        if (res != CURLE_OK)
+        {
             fprintf(stderr, "Failed to send data to API: %s\n", curl_easy_strerror(res));
             status = 1; // Set status to indicate a failure
         }
         free(jsonData); // Free the allocated JSON data
-    } else {
+    }
+    else
+    {
         fprintf(stderr, "Failed to create JSON data\n");
         status = 1; // Set status to indicate a failure
     }
@@ -90,9 +157,9 @@ int sendToApi(json_t *jsonArray) {
     return status;
 }
 
-
 // Function to process a CSV row and add it to the JSON array
-void processCSVRow(const char* row, json_t *jsonArray) {
+void processCSVRow(const char *row, json_t *jsonArray)
+{
     char npb_id[16];
     char http_count[16];
     char https_count[16];
@@ -122,14 +189,16 @@ void processCSVRow(const char* row, json_t *jsonArray) {
 }
 
 // Function to construct the CSV file path based on the nearest past time
-char* constructCSVFilePath(time_t currentTime) {
+char *constructCSVFilePath(time_t currentTime)
+{
     char timeString[80];
     struct tm timeinfo;
 
     // Get the time string for the nearest past time
     int currentMinute = currentTime / 60;
     // Check if the current minute is divisible by TIME_PERIOD_SEND and it's a new minute.
-    if (currentMinute % TIME_PERIOD_SEND == 0) {
+    if (currentMinute % TIME_PERIOD_SEND == 0)
+    {
         time_t intervalStartTime = currentTime - TIME_PERIOD_SEND * 60;
         intervalStartTime -= intervalStartTime % 60;
 
@@ -137,19 +206,27 @@ char* constructCSVFilePath(time_t currentTime) {
     }
 
     // Construct the file path
-    char* filePath = (char*)malloc(strlen("stats/") + strlen(CSV_FILE_PREFIX) + strlen(timeString) + strlen(CSV_FILE_EXTENSION) + 1);
+    char *filePath = (char *)malloc(strlen("stats/") + strlen(CSV_FILE_PREFIX) + strlen(timeString) + strlen(CSV_FILE_EXTENSION) + 1);
     sprintf(filePath, "stats/%s%s%s", CSV_FILE_PREFIX, timeString, CSV_FILE_EXTENSION);
     return filePath;
 }
 
-int main() {
+int main()
+{
     int last_sent_minute = -1; // Initialize to an invalid value
+
+    if (load_config_file())
+    {
+        printf("Error loading configuration file");
+        exit(1);
+    }
 
     // Create an array to store filenames that failed to send
     char failedFiles[MAX_FILES_TO_STORE][MAX_FILE_NAME_LENGTH];
     int failedFileCount = 0;
 
-    while (1) {
+    while (1)
+    {
         time_t now;
         struct tm timeinfo;
 
@@ -159,51 +236,65 @@ int main() {
         int currentMinute = timeinfo.tm_min;
 
         // Check if the current minute is divisible by TIME_PERIOD_SEND and it's a new minute.
-        if (currentMinute % TIME_PERIOD_SEND == 0 && currentMinute != last_sent_minute) {
+        if (currentMinute % TIME_PERIOD_SEND == 0 && currentMinute != last_sent_minute)
+        {
             sleep(1); // Sleep for 1 second to make sure the CSV file is ready
-            char* filePath = constructCSVFilePath(now);
-            FILE* file = fopen(filePath, "r");
+            char *filePath = constructCSVFilePath(now);
+            FILE *file = fopen(filePath, "r");
 
             print_stats();
 
             printf("\nReading file: %s\n", filePath);
 
             // Resend failed files
-            for (int i = 0; i < failedFileCount; i++) {
+            for (int i = 0; i < failedFileCount; i++)
+            {
                 // Open the failed file
-                char* failedFilePath = failedFiles[i];
-                FILE* failedFile = fopen(failedFilePath, "r");
+                char *failedFilePath = failedFiles[i];
+                FILE *failedFile = fopen(failedFilePath, "r");
 
-                if (!failedFile) {
+                if (!failedFile)
+                {
                     perror("Error opening failed CSV file");
-                } else {
+                }
+                else
+                {
                     char failedLine[MAX_LINE_LENGTH];
 
                     // Skip the header line
-                    if (fgets(failedLine, sizeof(failedLine), failedFile) == NULL) {
+                    if (fgets(failedLine, sizeof(failedLine), failedFile) == NULL)
+                    {
                         perror("Error reading header line");
                         fclose(failedFile);
-                    } else {
+                    }
+                    else
+                    {
                         // Create a JSON array to store rows
                         json_t *failedJsonArray = json_array();
-                        while (fgets(failedLine, sizeof(failedLine), failedFile) != NULL) {
+                        while (fgets(failedLine, sizeof(failedLine), failedFile) != NULL)
+                        {
                             processCSVRow(failedLine, failedJsonArray);
                         }
                         printf("Resending JSON array size: %ld\n", json_array_size(failedJsonArray));
 
                         // Send the JSON array to the API
-                        if (json_array_size(failedJsonArray) > 0) {
+                        if (json_array_size(failedJsonArray) > 0)
+                        {
                             int resendStatus = sendToApi(failedJsonArray);
-                            if (resendStatus == 0) {
+                            if (resendStatus == 0)
+                            {
                                 printf("Successfully resent data to API for file: %s\n", failedFilePath);
                                 // Remove the resend file
-                                if (remove(failedFilePath) != 0) {
+                                if (remove(failedFilePath) != 0)
+                                {
                                     perror("Error removing resend file");
                                 }
                                 aggregator_statistics.data_send += json_array_size(failedJsonArray);
                                 aggregator_statistics.file_send++;
                                 aggregator_statistics.file_pending--;
-                            } else {
+                            }
+                            else
+                            {
                                 printf("Failed to resend data to API for file: %s\n", failedFilePath);
                                 // You can choose to add the file back to the failedFiles array here if needed
                             }
@@ -215,43 +306,56 @@ int main() {
                 }
             }
 
-            if (file) {
+            if (file)
+            {
                 char line[MAX_LINE_LENGTH];
 
                 // Skip the header line
-                if (fgets(line, sizeof(line), file) == NULL) {
+                if (fgets(line, sizeof(line), file) == NULL)
+                {
                     perror("Error reading header line");
                     fclose(file);
-                } else {
+                }
+                else
+                {
                     // Create a JSON array to store rows
                     json_t *jsonArray = json_array();
-                    while (fgets(line, sizeof(line), file) != NULL) {
+                    while (fgets(line, sizeof(line), file) != NULL)
+                    {
                         processCSVRow(line, jsonArray);
                     }
                     printf("Json array size: %ld\n", json_array_size(jsonArray));
 
                     // Send the JSON array to the API
-                    if (json_array_size(jsonArray) > 0) {
+                    if (json_array_size(jsonArray) > 0)
+                    {
                         int initialSendStatus = sendToApi(jsonArray);
-                        if (initialSendStatus == 0) {
+                        if (initialSendStatus == 0)
+                        {
                             printf("Successfully sent data to API\n");
                             aggregator_statistics.data_send += json_array_size(jsonArray);
                             aggregator_statistics.file_send++;
                             sleep(1);
                             // Remove the file
-                            if (remove(filePath) != 0) {
+                            if (remove(filePath) != 0)
+                            {
                                 perror("Error removing file");
                             }
-                        } else {
+                        }
+                        else
+                        {
                             printf("Failed to send data to API\n");
                             // Store the filename in the failedFiles array
-                            if (failedFileCount < MAX_FILES_TO_STORE) {
+                            if (failedFileCount < MAX_FILES_TO_STORE)
+                            {
                                 strncpy(failedFiles[failedFileCount], filePath, MAX_FILE_NAME_LENGTH);
                                 failedFiles[failedFileCount][MAX_FILE_NAME_LENGTH - 1] = '\0'; // Null-terminate the copied string
                                 printf("Failed to send file: %s\n", failedFiles[failedFileCount]);
                                 aggregator_statistics.file_pending++;
                                 failedFileCount++;
-                            } else {
+                            }
+                            else
+                            {
                                 printf("Max failed files exceeded, some filenames may be lost.\n");
                             }
                         }
