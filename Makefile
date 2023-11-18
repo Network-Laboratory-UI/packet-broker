@@ -14,6 +14,9 @@ ifneq ($(shell $(PKGCONF) --exists libdpdk && echo 0),0)
 $(error "no installation of DPDK found")
 endif
 
+# Add support for pthread
+CFLAGS += "-lpthread"
+
 all: shared
 .PHONY: shared static
 shared: build/$(APP)-shared

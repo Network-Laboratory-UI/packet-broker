@@ -16,6 +16,7 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <time.h>
+#include <sched.h>
 
 // DPDK library
 #include <rte_eal.h>
@@ -62,9 +63,9 @@
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint16_t timer_period = 100;			// 100 Cycle
-static uint16_t timer_period_stats = 1; 	// 1 minutes
-static uint16_t timer_period_send = 10; 	// 10 minutes
+static uint16_t timer_period = 100;		// 100 Cycle
+static uint16_t timer_period_stats = 1; // 1 minutes
+static uint16_t timer_period_send = 10; // 10 minutes
 
 // TDOO: Create struct for packet broker identifier
 
@@ -246,7 +247,8 @@ print_stats(void)
 	fflush(stdout);
 }
 
-static void print_stats_csv_header(FILE *f){
+static void print_stats_csv_header(FILE *f)
+{
 	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
 }
 
@@ -291,15 +293,18 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 			char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
 
 			// Convert the TCP payload to a string (char array)
-			char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
+			// char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
+
 			if (tcp_payload_len > 0)
 			{
 				// Copy the TCP payload into the string
 				// Limit the copy to avoid buffer overflow
-				snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
+				// memcpy(tcp_payload_str, tcp_payload, tcp_payload_len);
+				// tcp_payload_str[tcp_payload_len] = '\0';
 
-				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
+				if (strncmp(tcp_payload, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 				{
+					printf("Payload: %s\n", tcp_payload);
 					return HTTP_GET;
 				}
 
@@ -380,22 +385,27 @@ lcore_main(void)
 		   rte_lcore_id());
 
 	// Main work of application loop
+	struct rte_mbuf *bufs[BURST_SIZE];
+
 	while (!force_quit)
 	{
-
-		// Get burst of RX packets, from first port of pair
-		struct rte_mbuf *bufs[BURST_SIZE];
+		// memset(bufs, 0, BURST_SIZE);
 		// TODO: get the portId from options
-		const uint16_t nb_rx = rte_eth_rx_burst(1, 0,
-												bufs, BURST_SIZE);
+		const uint16_t nb_rx = rte_eth_rx_burst(1, 0, bufs, BURST_SIZE);
+		// printf("nb_rx : %d", nb_rx);
 
 		// Statistic for RX
 		port_statistics[1].rx_count += nb_rx;
 		port_statistics[1].tx_count = 0;
 
-		// if there is no packet, continue
+		// if there is no packet, yield CPU to prevent overheating
 		if (unlikely(nb_rx == 0))
+		{
+			sched_yield();
 			continue;
+		}
+
+		// printf("No of packet: %d\n", nb_rx);
 
 		// process the packet
 		for (int i = 0; i < nb_rx; i++)
@@ -409,8 +419,9 @@ lcore_main(void)
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
 			{
-				// send the packet to port 0 if HTTP GET
-				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
+				// printf("Packet type HTTP_GET\n");
+				//  send the packet to port 0 if HTTP GET
+				// sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
 
 				// dump packet
 				dump_packet(bufs[i], f_dump);
@@ -461,10 +472,9 @@ lcore_main(void)
 			strftime(time_str, sizeof(time_str), format, tm_info);
 			print_stats_csv(f_stat, time_str);
 			fflush(f_stat);
-			//clear_stats();
+			// clear_stats();
 			last_run_minute = current_minute;
 		}
-
 
 		/* if timer is enabled */
 		if (timer_period > 0)
@@ -530,6 +540,7 @@ int main(int argc, char *argv[])
 	// count the number of lcore
 	if (rte_lcore_count() > 1)
 		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
+	printf("Core count: %d\n", rte_lcore_count());
 
 	// run the lcore main function
 	lcore_main();
