@@ -63,15 +63,11 @@
 #define TLS_CLIENT_HELLO_MAGIC "\x01"
 #define TLS_CLIENT_HELLO_MAGIC_LEN 1
 
-// Define the number of threads and tasks
-#define MAX_THREADS 4
-#define MAX_TASKS 1000000
-
 // Force quit variable
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint16_t timer_period = 100;		// 100 Cycle
+static uint16_t timer_period = 100;     // 100 Cycle
 static uint16_t timer_period_stats = 1; // 1 minutes
 static uint16_t timer_period_send = 10; // 10 minutes
 
@@ -84,23 +80,17 @@ const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
 // Port statistic struct
 struct port_statistics_data
 {
-	uint64_t tx_count;
-	uint64_t rx_count;
-	uint64_t tx_size;
-	uint64_t rx_size;
-	uint64_t dropped;
-	uint64_t httpMatch;
-	uint64_t httpsMatch;
+    uint64_t tx_count;
+    uint64_t rx_count;
+    uint64_t tx_size;
+    uint64_t rx_size;
+    uint64_t dropped;
+    uint64_t httpMatch;
+    uint64_t httpsMatch;
     pthread_mutex_t mutex;
-	// TODO: add size of packet, throughpout.
+    // TODO: add size of packet, throughpout.
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
-
-struct StatsThreadData {
-    FILE *dumpFile;
-    FILE *statFile;
-    pthread_mutex_t mutex;
-};
 
 // End if define
 #endif

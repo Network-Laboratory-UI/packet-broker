@@ -113,9 +113,6 @@ void *packetProcessingThread(void *arg)
 		// TODO: get the portId from options
 		struct rte_mbuf *bufs[BURST_SIZE];
 		const uint16_t nb_rx = rte_eth_rx_burst(1, 0, bufs, BURST_SIZE);
-		// printf("nb_rx : %d", nb_rx);
-
-		
 
 		// if there is no packet, yield CPU to prevent overheating
 		if (unlikely(nb_rx == 0))
@@ -292,7 +289,7 @@ lcore_main(void)
 
 	// pthread_t threads[core_count];
 
-	for (int i = 0; i < core_count - 1; i++)
+	for (int i = 0; i < core_count; i++)
 	{
 		pthread_t thread_id;
 
