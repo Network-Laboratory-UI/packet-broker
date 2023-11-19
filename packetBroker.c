@@ -352,8 +352,8 @@ int main(int argc, char *argv[])
 
 	// count the number of lcore
 	if (rte_lcore_count() > 1)
-		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
-	printf("Core count: %d\n", rte_lcore_count());
+		printf("\nMULTITHREAD: System has more than 1 core.\n");
+	printf("CORE COUNT: %d\n", rte_lcore_count());
 
 	// print the header of the statistics file
 	print_stats_csv_header(f_stat);
