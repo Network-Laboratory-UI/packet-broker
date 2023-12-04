@@ -25,6 +25,8 @@
 #include <rte_mbuf.h>
 #include <rte_tcp.h>
 #include <rte_pdump.h>
+#include <rte_launch.h>
+
 
 // ======================================================= THE DEFINE =======================================================
 
@@ -177,6 +179,29 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	return 0;
 }
 // END OF PORT INITIALIZATION
+
+// print packet broker logo
+static void print_logo(void){
+	system("clear");
+	printf("&&&&&&&#        &&       ##&&&&&    &&&     &&&  &&&&&&&&&& &&&&&&&&&&&&\n"
+       "&&&    &&&     &&&&     &&&    &&&  &&&   &&&.   &&(            &&&\n"
+       "&&&    &&&    &&&,&&    &&#         &&& &&&#     &&(            &&&\n"
+       "&&&&&&&&&    &&&  &&&   &&/         &&&&&&&(     &&&&&&&&&      &&&\n"
+       "&&&         &&&&&&&&&&  &&&     &&/ &&&   &&&    &&(            &&&\n"
+       "&&&        ,&&*     &&&  &&&@&&&&&  &&&    &&&&  &&&&&&&&&&     &&&\n\n"
+
+       "&&&##&&&&&  &&&##&&&&@  .&&&&&&&&.  &&&   *&&&   &&&#####$%  &&&$$&&&&%\n"
+       "&&&    &&&  &&&    /&&  &&&    .&&  &&&  &&&     &&(         &&(    &&&\n"
+       "&&&&&&&&    &&&&&&&&&&  &&.     &&. &&&&&&&      &&&&&&&&&   &&&&&&&&&\n"
+       "&&&    ,&&, &&&  &&&    &&.     &&. &&&& @&&&    &&(         &&(  &&&\n"
+       "&&&    &&&  &&&   #&&&  &&&.  .&&&  &&&    &&&   &&(         &&(   &&&\n"
+       "&&&&&&&.    &&&     &&&    &&&&     &&&     &&&& &&&&&&&&&&  &&(    &&&#\n\n");
+
+	printf("Ready To Filter your traffic.\n\n");
+
+	printf("System is ");
+	printf("\033[0;32mrunning\033[0m\n");
+}
 
 // OPEN FILE
 static FILE *open_file(const char *filename)
@@ -397,9 +422,10 @@ static void
 signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM)
-	{
-		printf("\n\nSignal %d received, preparing to exit...\n",
-			   signum);
+	{	
+		printf("\nSystem is ");
+		printf("\033[0;31mShuting Down \033[0m");
+		printf("with signal %d\n", signum);
 		force_quit = true;
 	}
 }
@@ -439,7 +465,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			strcat(filename, STAT_FILE);
 			strcat(filename, time_str_file);
 			strcat(filename, STAT_FILE_EXT);
-			printf("first open file");
 			*f_stat = open_file(filename);
 
 			// print the header of the statistics file
@@ -469,7 +494,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			strcat(filename, STAT_FILE);
 			strcat(filename, time_str);
 			strcat(filename, STAT_FILE_EXT);
-			printf("open file");
 			*f_stat = open_file(filename);
 
 			// print the header of the statistics file
@@ -488,8 +512,8 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 }
 
 // ======================================================= THE LCORE FUNCTION =======================================================
-static inline void
-lcore_main(void)
+static inline int
+lcore_main(void *arg)
 {
 	// initialization
 	uint16_t port;
@@ -499,6 +523,11 @@ lcore_main(void)
 	int last_run_stat = 0;
 	int last_run_file = 0;
 	FILE *f_stat = NULL;
+
+	// Get the lcore ID
+    unsigned lcore_id = rte_lcore_id();
+
+    printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n", lcore_id);
 
 	/*
 	 * Check that the port is on the same NUMA node as the polling thread
@@ -527,8 +556,8 @@ lcore_main(void)
 												bufs, BURST_SIZE);
 
 		// Statistic for RX
-		port_statistics[1].rx_count += nb_rx;
-		port_statistics[1].tx_count = 0;
+		// port_statistics[1].rx_count += nb_rx;
+		// port_statistics[1].tx_count = 0;
 
 		// if there is no packet, continue
 		if (unlikely(nb_rx == 0))
@@ -538,7 +567,7 @@ lcore_main(void)
 		for (int i = 0; i < nb_rx; i++)
 		{
 			// update the statistics
-			port_statistics[1].rx_size += rte_pktmbuf_pkt_len(bufs[i]);
+			// port_statistics[1].rx_size += rte_pktmbuf_pkt_len(bufs[i]);
 
 			// check the packet type
 			packet_type = packet_checker(&bufs[i], 1);
@@ -552,9 +581,9 @@ lcore_main(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].tx_count += sent;
-					port_statistics[0].httpMatch += sent;
-					port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
+					// port_statistics[0].tx_count += sent;
+					// port_statistics[0].httpMatch += sent;
+					// port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -565,15 +594,15 @@ lcore_main(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].tx_count += sent;
-					port_statistics[0].httpsMatch += sent;
-					port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
+					// port_statistics[0].tx_count += sent;
+					// port_statistics[0].httpsMatch += sent;
+					// port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
 				}
 			}
 			else
 			{
 				// update the statistics
-				port_statistics[0].dropped += 1;
+				// port_statistics[0].dropped += 1;
 
 				// free up the buffer
 				rte_pktmbuf_free(bufs[i]);
@@ -584,7 +613,7 @@ lcore_main(void)
 		rte_pktmbuf_free(*bufs);
 
 		// Print Statistcs to file
-		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
+		// print_stats_file(&last_run_stat, &last_run_file, &f_stat);
 
 		/* if timer is enabled */
 		if (TIMER_PERIOD > 0)
@@ -597,12 +626,14 @@ lcore_main(void)
 			if (timer_tsc >= TIMER_PERIOD)
 			{
 				/* do this only on main core */
-				print_stats();
+				// print_stats();
+				print_logo();
 				/* reset the timer */
 				timer_tsc = 0;
 			}
 		}
 	}
+	return 0;
 }
 
 // ======================================================= THE MAIN FUNCTION =======================================================
@@ -612,55 +643,62 @@ int main(int argc, char *argv[])
 	unsigned nb_ports;
 	uint16_t portid;
 
-	// load the config file
-	if(load_config_file()){
-		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
-	}
+	// Load the config file
+    if (load_config_file())
+    {
+        rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
+    }
 
-	// Initializion the Environment Abstraction Layer (EAL)
-	int ret = rte_eal_init(argc, argv);
-	if (ret < 0)
-		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
+    // Initialization of the Environment Abstraction Layer (EAL)
+    int ret = rte_eal_init(argc, argv);
+    if (ret < 0)
+        rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
 
-	argc -= ret;
-	argv += ret;
+    argc -= ret;
+    argv += ret;
 
-	// force quit handler
-	force_quit = false;
-	signal(SIGINT, signal_handler);
-	signal(SIGTERM, signal_handler);
+    // Force quit handler
+    force_quit = false;
+    signal(SIGINT, signal_handler);
+    signal(SIGTERM, signal_handler);
 
-	// clean the data
-	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
+    // Clean the data
+    memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
 
-	// count the number of ports to send and receive
-	nb_ports = rte_eth_dev_count_avail();
-	if (nb_ports < 2 || (nb_ports & 1))
-		rte_exit(EXIT_FAILURE, "Error: number of ports must be even\n");
+    // Count the number of ports to send and receive
+    nb_ports = rte_eth_dev_count_avail();
+    if (nb_ports < 2 || (nb_ports & 1))
+        rte_exit(EXIT_FAILURE, "Error: number of ports must be even\n");
 
-	// allocates the mempool to hold the mbufs
-	mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS * nb_ports,
-										MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
+    // Allocates the mempool to hold the mbufs
+    mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS * nb_ports,
+                                                           MBUF_CACHE_SIZE, 0, RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
 
-	// check the mempool allocation
-	if (mbuf_pool == NULL)
-		rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
+    // Check the mempool allocation
+    if (mbuf_pool == NULL)
+        rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
 
-	// initializing ports
-	RTE_ETH_FOREACH_DEV(portid)
-	if (port_init(portid, mbuf_pool) != 0)
-		rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n",
-				 portid);
+    // Initializing ports
+    RTE_ETH_FOREACH_DEV(portid)
+        if (port_init(portid, mbuf_pool) != 0)
+            rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n",
+                     portid);
 
-	// count the number of lcore
-	if (rte_lcore_count() > 1)
-		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
+    // Count the number of lcore
+    unsigned lcore_count = rte_lcore_count();
+    if (lcore_count < 2)
+        rte_exit(EXIT_FAILURE, "Error: at least 2 lcores are required\n");
 
-	// run the lcore main function
-	lcore_main();
+    // Launch lcore threads
+    rte_eal_mp_remote_launch(lcore_main, NULL, 0);
 
-	// clean up the EAL
-	rte_eal_cleanup();
+    // Wait for all lcores to finish
+    rte_eal_mp_wait_lcore();
+
+    // Clean up the EAL
+    rte_eal_cleanup();
+
+    return 0;
 }
 
 // END OF MAIN FUNCTION
