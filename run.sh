@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Start a new Tmux session 
-tmux new-session -d './build/packetBroker -l 1 -n 4'
+tmux new-session -d './build/packetBroker -l 0-2 -n 4'
 
 # Split the Tmux session into two horizontal panes
 tmux split-pane -v './build/aggregator'

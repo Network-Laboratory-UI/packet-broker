@@ -92,9 +92,14 @@ struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
 struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
 
-// ======================================================= THE FUNCTIONS =======================================================
-
-// PORT INITIALIZATION
+/*
+* The port initialization function
+* Initialize the port with the given port number and mbuf pool
+* @param port 
+* 	the port number
+* @param mbuf_pool 
+* 	pointer to a memory pool of mbufs (memory buffers)
+*/
 static inline int
 port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
@@ -179,9 +184,13 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 
 	return 0;
 }
-// END OF PORT INITIALIZATION
 
-// OPEN FILE
+/*
+* The open file function
+* Open the file with the given filename
+* @param filename
+* 	the name of the file
+*/
 static FILE *open_file(const char *filename)
 {
 	FILE *f = fopen(filename, "a+");
@@ -193,7 +202,10 @@ static FILE *open_file(const char *filename)
 	return f;
 }
 
-// PRINT OUT STATISTICS
+/*
+* The print statistics function
+* Print the statistics to the console
+*/
 static void
 print_stats(void)
 {
@@ -238,20 +250,33 @@ print_stats(void)
 	fflush(stdout);
 }
 
-// PRINT STATISTICS HEADER INTO CSV FILE
+/*
+* The print statistics csv header function
+* Print the header of the statistics to the csv file
+* @param f
+* 	the file pointer
+*/
 static void print_stats_csv_header(FILE *f)
 {
 	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
 }
 
-// PRINT STATISTICS INTO CSV FILE
+/*
+* The print statistics csv function
+* Print the statistics to the csv file
+* @param f
+* 	the file pointer
+*/
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
 	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, port_statistics[0].throughput);
 }
 
-// CLEAR THE STATS STRUCT
+/*
+* The clear statistics function
+* Clear the statistics
+*/
 static void clear_stats(void)
 {
 	rte_eth_stats_reset(0);
@@ -259,7 +284,10 @@ static void clear_stats(void)
 	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 }
 
-// CONFIG FILE LOADER
+/*
+* The load configuration file function
+* Load the configuration file
+*/
 int load_config_file()
 {
 	FILE *configFile = fopen("config/packetBroker.cfg", "r");
@@ -344,8 +372,15 @@ int load_config_file()
 	return 0;
 }
 
-// PACKET PROCESSING AND CHECKING
-static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
+/*
+* The packet checker function
+* Check the packet type
+* @param pkt
+* 	the packet
+* @param nb_rx
+* 	the number of packets
+*/
+static int packet_checker(struct rte_mbuf **pkt)
 {
 	// Define Variable
 	int sent;
@@ -500,19 +535,28 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 	}
 }
 
-// ======================================================= THE LCORE FUNCTION =======================================================
+/*
+ * The lcore stast process
+ * Running all the stats process including
+ * - Get the statistics
+ * - Update the statistics
+ * - Calculate the throughput
+ * - Print the statistics
+ * - Print the statistics to file
+ * - Reset the timer
+ */
 static inline void
 lcore_stats_process(void)
 {
 	// Variable declaration
-	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc; // for timestamp
-	const uint64_t drain_tsc = rte_get_tsc_hz()/1000;
-	int last_run_stat = 0;
-	int last_run_file = 0;
-	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0;
-	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0;
-	double throughput_0 = 0.0, throughput_1 = 0.0;
-	FILE *f_stat = NULL;
+	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc; 		// For timing
+	const uint64_t drain_tsc = rte_get_tsc_hz()/1000;		// Timer period in cycles (1ms)
+	int last_run_stat = 0;									// lastime statistics printed
+	int last_run_file = 0;									// lastime statistics printed to file
+	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0;		// For throughput calculation
+	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0;		// For throughput calculation
+	double throughput_0 = 0.0, throughput_1 = 0.0;			// For throughput calculation
+	FILE *f_stat = NULL;									// File pointer for statistics
 
 	timer_tsc = 0;
 	prev_tsc = 0;
@@ -581,7 +625,15 @@ lcore_stats_process(void)
 	}
 }
 
-// ======================================================= THE LCORE FUNCTION =======================================================
+/*
+ * The lcore main process
+ * Running all the forwarding process including
+ * - Get the burst of RX packets
+ * - Check the packet type (HTTP or HTTPS)
+ * - Send the packet to the right port
+ * - Update the statistics
+ * - Free up the buffer
+ */
 static inline void
 lcore_main_process(void)
 {
@@ -590,19 +642,6 @@ lcore_main_process(void)
 	uint64_t timer_tsc = 0;
 	uint64_t packet_type;
 	uint16_t sent;
-
-	/*
-	 * Check that the port is on the same NUMA node as the polling thread
-	 * for best performance.
-	 */
-	RTE_ETH_FOREACH_DEV(port)
-	if (rte_eth_dev_socket_id(port) >= 0 &&
-		rte_eth_dev_socket_id(port) !=
-			(int)rte_socket_id())
-		printf("WARNING, port %u is on remote NUMA node to "
-			   "polling thread.\n\tPerformance will "
-			   "not be optimal.\n",
-			   port);
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
@@ -626,7 +665,7 @@ lcore_main_process(void)
 		{
 
 			// check the packet type
-			packet_type = packet_checker(&bufs[i], 1);
+			packet_type = packet_checker(&bufs[i]);
 
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
@@ -666,7 +705,19 @@ lcore_main_process(void)
 	}
 }
 
-// ======================================================= THE MAIN FUNCTION =======================================================
+/*
+ * The main function
+ * entry point of the application
+ * - Load the configuration file
+ * - Initialize the EAL
+ * - Initialize the ports
+ * - Assign the lcore
+ * - Run the lcore main function
+ * - Run the stats
+ * - Wait all lcore stopped
+ * - Clean up the EAL
+ * - Exit the application
+ */
 int main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool;
