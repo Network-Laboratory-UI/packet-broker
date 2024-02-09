@@ -69,7 +69,6 @@ char STAT_FILE_EXT[100];
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint32_t TIMER_PERIOD;		// in Miliseconds
 static uint32_t TIMER_PERIOD_STATS; // 1 second
 static uint32_t TIMER_PERIOD_SEND;	// 10 minutes
 
@@ -85,7 +84,7 @@ struct port_statistics_data
 	uint64_t dropped;
 	uint64_t httpMatch;
 	uint64_t httpsMatch;
-	uint64_t throughput;
+	long int throughput;
 	uint64_t noMatch;
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
@@ -233,7 +232,7 @@ print_stats(void)
 			   "\nHTTP GET match: %22" PRIu64
 			   "\nTLS CLIENT HELLO match: %14" PRIu64
 			   "\nNo match: %28" PRIu64
-			   "\nThroughput: %26" PRIu64,
+			   "\nThroughput: %26" PRId64,
 			   portid,
 			   port_statistics[portid].tx_count,
 			   port_statistics[portid].tx_size,
@@ -270,7 +269,7 @@ static void print_stats_csv_header(FILE *f)
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, port_statistics[0].throughput);
+	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, port_statistics[1].throughput);
 }
 
 /*
@@ -349,11 +348,6 @@ int load_config_file()
 			{
 				strcpy(STAT_FILE_EXT, value);
 				printf("STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
-			}
-			else if (strcmp(key, "TIMER_PERIOD") == 0)
-			{
-				TIMER_PERIOD = atoi(value);
-				printf("TIMER_PERIOD: %d\n", TIMER_PERIOD);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_STATS") == 0)
 			{
@@ -487,7 +481,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			strcat(filename, STAT_FILE);
 			strcat(filename, time_str_file);
 			strcat(filename, STAT_FILE_EXT);
-			printf("first open file");
 			*f_stat = open_file(filename);
 
 			// print the header of the statistics file
@@ -550,7 +543,7 @@ lcore_stats_process(void)
 {
 	// Variable declaration
 	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc; 		// For timing
-	const uint64_t drain_tsc = rte_get_tsc_hz()/1000;		// Timer period in cycles (1ms)
+	const uint64_t drain_tsc = rte_get_tsc_hz();			// Timer period in cycles (1s)
 	int last_run_stat = 0;									// lastime statistics printed
 	int last_run_file = 0;									// lastime statistics printed to file
 	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0;		// For throughput calculation
@@ -571,13 +564,13 @@ lcore_stats_process(void)
 
 		if (unlikely(diff_tsc > drain_tsc))
 		{
-			if (TIMER_PERIOD > 0)
+			if (TIMER_PERIOD_STATS > 0)
 			{
 
 				timer_tsc += 1;
 
 				// Check if the difference is greater than the timer period
-				if (unlikely(timer_tsc >= TIMER_PERIOD))
+				if (unlikely(timer_tsc >= TIMER_PERIOD_STATS))
 				{
 					printf("timer_tsc: %ld\n", timer_tsc);
 
@@ -597,27 +590,23 @@ lcore_stats_process(void)
 					port_statistics[0].tx_size = stats_0.obytes;
 					port_statistics[0].dropped = stats_0.imissed;
 
-					// Calculate the throughput
-					end_rx_size_1 = port_statistics[1].rx_size;
+					// Collect the throughput
+					end_rx_size_1 = 
 					end_tx_size_0 = port_statistics[0].tx_size;
-					port_statistics[0].throughput = (end_tx_size_0 - start_tx_size_0) / (double)TIMER_PERIOD;
-					port_statistics[1].throughput = (end_rx_size_1 - start_rx_size_1) / (double)TIMER_PERIOD;
 
-					// Update the start_tx_size for the next period
-					start_tx_size_0 = end_tx_size_0;
-					start_rx_size_1 = end_rx_size_1;
+					// Calculate the throughput
+					port_statistics[1].throughput = port_statistics[1].rx_size/TIMER_PERIOD_STATS;
+					port_statistics[0].throughput = port_statistics[0].tx_size/TIMER_PERIOD_STATS;
 
 					// Print the statistics
 					print_stats();
 
-					// Print Statistcs to file
-					print_stats_file(&last_run_stat, &last_run_file, &f_stat);
-
 					// Reset the timer
-					timer_tsc = 0;
-
-					
+					timer_tsc = 0;	
 				}
+
+				// Print Statistcs to file
+				print_stats_file(&last_run_stat, &last_run_file, &f_stat);
 			}
 			// Reset the previous timestamp
 			prev_tsc = cur_tsc;
