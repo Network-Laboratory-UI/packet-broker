@@ -590,10 +590,6 @@ lcore_stats_process(void)
 					port_statistics[0].tx_size = stats_0.obytes;
 					port_statistics[0].dropped = stats_0.imissed;
 
-					// Collect the throughput
-					end_rx_size_1 = 
-					end_tx_size_0 = port_statistics[0].tx_size;
-
 					// Calculate the throughput
 					port_statistics[1].throughput = port_statistics[1].rx_size/TIMER_PERIOD_STATS;
 					port_statistics[0].throughput = port_statistics[0].tx_size/TIMER_PERIOD_STATS;
