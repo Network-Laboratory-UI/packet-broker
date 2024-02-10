@@ -759,9 +759,6 @@ int main(int argc, char *argv[])
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
-		printf("lcore id : %u\n", lcore_id);
-		printf("lcore main : %u\n", lcore_main == 0);
-		printf("lcore stats : %u\n", lcore_stats);
 		if (lcore_id == (unsigned int)lcore_main ||
 			lcore_id == (unsigned int)lcore_stats)
 		{
