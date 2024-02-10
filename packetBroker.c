@@ -69,9 +69,8 @@ char STAT_FILE_EXT[100];
 static volatile bool force_quit;
 
 // Timer period for statistics
-static uint16_t TIMER_PERIOD;			// 100 Cycle
-static uint16_t TIMER_PERIOD_STATS; 	// 1 second
-static uint16_t TIMER_PERIOD_SEND; 		// 10 minutes
+static uint32_t TIMER_PERIOD_STATS; // 1 second
+static uint32_t TIMER_PERIOD_SEND;	// 10 minutes
 
 // TDOO: Create struct for packet broker identifier
 
@@ -85,13 +84,21 @@ struct port_statistics_data
 	uint64_t dropped;
 	uint64_t httpMatch;
 	uint64_t httpsMatch;
-	// TODO: add size of packet, throughpout.
+	long int throughput;
+	uint64_t noMatch;
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
+struct rte_eth_stats stats_0;
+struct rte_eth_stats stats_1;
 
-// ======================================================= THE FUNCTIONS =======================================================
-
-// PORT INITIALIZATION
+/*
+* The port initialization function
+* Initialize the port with the given port number and mbuf pool
+* @param port 
+* 	the port number
+* @param mbuf_pool 
+* 	pointer to a memory pool of mbufs (memory buffers)
+*/
 static inline int
 port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
@@ -176,9 +183,13 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 
 	return 0;
 }
-// END OF PORT INITIALIZATION
 
-// OPEN FILE
+/*
+* The open file function
+* Open the file with the given filename
+* @param filename
+* 	the name of the file
+*/
 static FILE *open_file(const char *filename)
 {
 	FILE *f = fopen(filename, "a+");
@@ -190,16 +201,14 @@ static FILE *open_file(const char *filename)
 	return f;
 }
 
-// PRINT OUT STATISTICS
+/*
+* The print statistics function
+* Print the statistics to the console
+*/
 static void
 print_stats(void)
 {
-	uint64_t total_packets_dropped, total_packets_tx, total_packets_rx;
 	unsigned int portid;
-
-	total_packets_dropped = 0;
-	total_packets_tx = 0;
-	total_packets_rx = 0;
 
 	const char clr[] = {27, '[', '2', 'J', '\0'};
 	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
@@ -220,8 +229,10 @@ print_stats(void)
 			   "\nPackets received count: %14" PRIu64
 			   "\nPackets received size: %15" PRIu64
 			   "\nPackets dropped: %21" PRIu64
-			   "\nHTTP GET MATCH: %22" PRIu64
-			   "\nTLS CLIENT HELLO MATCH: %14" PRIu64,
+			   "\nHTTP GET match: %22" PRIu64
+			   "\nTLS CLIENT HELLO match: %14" PRIu64
+			   "\nNo match: %28" PRIu64
+			   "\nThroughput: %26" PRId64,
 			   portid,
 			   port_statistics[portid].tx_count,
 			   port_statistics[portid].tx_size,
@@ -229,105 +240,141 @@ print_stats(void)
 			   port_statistics[portid].rx_size,
 			   port_statistics[portid].dropped,
 			   port_statistics[portid].httpMatch,
-			   port_statistics[portid].httpsMatch);
-
-		total_packets_dropped += port_statistics[portid].dropped;
-		total_packets_tx += port_statistics[portid].tx_count;
-		total_packets_rx += port_statistics[portid].rx_count;
+			   port_statistics[portid].httpsMatch,
+			   port_statistics[portid].noMatch,
+			   port_statistics[portid].throughput);
 	}
-	printf("\nAggregate statistics ==============================="
-		   "\nTotal packets sent: %18" PRIu64
-		   "\nTotal packets received: %14" PRIu64
-		   "\nTotal packets dropped: %15" PRIu64,
-		   total_packets_tx,
-		   total_packets_rx,
-		   total_packets_dropped);
-	printf("\n====================================================\n");
+	printf("\n=====================================================");
 
 	fflush(stdout);
 }
 
-// PRINT STATISTICS HEADER INTO CSV FILE
+/*
+* The print statistics csv header function
+* Print the header of the statistics to the csv file
+* @param f
+* 	the file pointer
+*/
 static void print_stats_csv_header(FILE *f)
 {
 	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
 }
 
-// PRINT STATISTICS INTO CSV FILE
+/*
+* The print statistics csv function
+* Print the statistics to the csv file
+* @param f
+* 	the file pointer
+*/
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%d\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, 0);
+	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, port_statistics[1].throughput);
 }
 
-// CLEAR THE STATS STRUCT
+/*
+* The clear statistics function
+* Clear the statistics
+*/
 static void clear_stats(void)
 {
+	rte_eth_stats_reset(0);
+	rte_eth_stats_reset(1);
 	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 }
 
-// CONFIG FILE LOADER
+/*
+* The load configuration file function
+* Load the configuration file
+*/
 int load_config_file()
 {
 	FILE *configFile = fopen("config/packetBroker.cfg", "r");
-	if (configFile == NULL) {
-        printf("Error opening configuration file");
-        return 1;
-    }
+	if (configFile == NULL)
+	{
+		printf("Error opening configuration file");
+		return 1;
+	}
 
 	char line[256];
-    char key[256];
-    char value[256];
+	char key[256];
+	char value[256];
 
-	while (fgets(line, sizeof(line), configFile)) {
-        if (sscanf(line, "%255[^=]= %255[^\n]", key, value) == 2) {
-            if (strcmp(key, "MAX_PACKET_LEN") == 0) {
-                MAX_PACKET_LEN = atoi(value);
+	while (fgets(line, sizeof(line), configFile))
+	{
+		if (sscanf(line, "%255[^=]= %255[^\n]", key, value) == 2)
+		{
+			if (strcmp(key, "MAX_PACKET_LEN") == 0)
+			{
+				MAX_PACKET_LEN = atoi(value);
 				printf("MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
-            } else if (strcmp(key, "RX_RING_SIZE") == 0) {
-                RX_RING_SIZE = atoi(value);
+			}
+			else if (strcmp(key, "RX_RING_SIZE") == 0)
+			{
+				RX_RING_SIZE = atoi(value);
 				printf("RX_RING_SIZE: %d\n", RX_RING_SIZE);
-            } else if (strcmp(key, "TX_RING_SIZE") == 0) {
-                TX_RING_SIZE = atoi(value);
+			}
+			else if (strcmp(key, "TX_RING_SIZE") == 0)
+			{
+				TX_RING_SIZE = atoi(value);
 				printf("TX_RING_SIZE: %d\n", TX_RING_SIZE);
-            } else if (strcmp(key, "NUM_MBUFS") == 0) {
+			}
+			else if (strcmp(key, "NUM_MBUFS") == 0)
+			{
 				NUM_MBUFS = atoi(value);
 				printf("NUM_MBUFS: %d\n", NUM_MBUFS);
-            } else if (strcmp(key, "MBUF_CACHE_SIZE") == 0) {
+			}
+			else if (strcmp(key, "MBUF_CACHE_SIZE") == 0)
+			{
 				MBUF_CACHE_SIZE = atoi(value);
 				printf("MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
-            } else if (strcmp(key, "BURST_SIZE") == 0) {
+			}
+			else if (strcmp(key, "BURST_SIZE") == 0)
+			{
 				BURST_SIZE = atoi(value);
 				printf("BURST_SIZE: %d\n", BURST_SIZE);
-            } else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0) {
+			}
+			else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0)
+			{
 				MAX_TCP_PAYLOAD_LEN = atoi(value);
 				printf("MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
-			} else if (strcmp(key, "STAT_FILE") == 0) {
+			}
+			else if (strcmp(key, "STAT_FILE") == 0)
+			{
 				strcpy(STAT_FILE, value);
 				printf("STAT_FILE: %s\n", STAT_FILE);
-            } else if (strcmp(key, "STAT_FILE_EXT") == 0) {
+			}
+			else if (strcmp(key, "STAT_FILE_EXT") == 0)
+			{
 				strcpy(STAT_FILE_EXT, value);
 				printf("STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
-			} else if (strcmp(key, "TIMER_PERIOD") == 0) {
-				TIMER_PERIOD = atoi(value);
-				printf("TIMER_PERIOD: %d\n", TIMER_PERIOD);
-			} else if (strcmp(key, "TIMER_PERIOD_STATS") == 0) {
+			}
+			else if (strcmp(key, "TIMER_PERIOD_STATS") == 0)
+			{
 				TIMER_PERIOD_STATS = atoi(value);
 				printf("TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
-			} else if (strcmp(key, "TIMER_PERIOD_SEND") == 0) {
+			}
+			else if (strcmp(key, "TIMER_PERIOD_SEND") == 0)
+			{
 				TIMER_PERIOD_SEND = atoi(value);
 				printf("TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
 			}
-        }
-    }
+		}
+	}
 
 	fclose(configFile);
-    return 0;
+	return 0;
 }
 
-
-// PACKET PROCESSING AND CHECKING
-static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
+/*
+* The packet checker function
+* Check the packet type
+* @param pkt
+* 	the packet
+* @param nb_rx
+* 	the number of packets
+*/
+static int packet_checker(struct rte_mbuf **pkt)
 {
 	// Define Variable
 	int sent;
@@ -355,28 +402,22 @@ static int packet_checker(struct rte_mbuf **pkt, uint16_t nb_rx)
 
 			// Convert the TCP payload to a string (char array)
 			char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-			if (tcp_hdr->tcp_flags == (RTE_TCP_PSH_FLAG | RTE_TCP_ACK_FLAG) && tcp_payload_len > 0)
+			// Copy the TCP payload into the string
+			// Limit the copy to avoid buffer overflow
+			snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
+
+			if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
 			{
-				// Copy the TCP payload into the string
-				// Limit the copy to avoid buffer overflow
-				snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
+				return HTTP_GET;
+			}
 
-				if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
+			// Check if the payload contains a TLS handshake message
+			if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
+			{
+				if (tcp_payload[5] == 1)
 				{
-					return HTTP_GET;
+					return TLS_CLIENT_HELLO;
 				}
-
-				// Check if the payload contains a TLS handshake message
-				if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
-				{
-					if (tcp_payload[5] == 1)
-					{
-						return TLS_CLIENT_HELLO;
-					}
-				}
-
-				// return if there is no match
-				return 0;
 			}
 
 			// return if there is no payload
@@ -406,7 +447,8 @@ signal_handler(int signum)
 // END OF TERMINATION SIGNAL HANDLER
 
 // PRINT STATISTICS PROCESS
-static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat){
+static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat)
+{
 	int current_sec;
 	char time_str[80];
 	char time_str_file[80];
@@ -439,7 +481,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			strcat(filename, STAT_FILE);
 			strcat(filename, time_str_file);
 			strcat(filename, STAT_FILE_EXT);
-			printf("first open file");
 			*f_stat = open_file(filename);
 
 			// print the header of the statistics file
@@ -448,8 +489,8 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			// free the string
 			free(filename);
 			*last_run_file = tm_rounded->tm_min;
-			
-			//Set the time to now
+
+			// Set the time to now
 			tm_info = localtime(&now); // TODO: not efficient because already called before
 		}
 
@@ -487,31 +528,105 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 	}
 }
 
-// ======================================================= THE LCORE FUNCTION =======================================================
+/*
+ * The lcore stast process
+ * Running all the stats process including
+ * - Get the statistics
+ * - Update the statistics
+ * - Calculate the throughput
+ * - Print the statistics
+ * - Print the statistics to file
+ * - Reset the timer
+ */
 static inline void
-lcore_main(void)
+lcore_stats_process(void)
+{
+	// Variable declaration
+	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc; 		// For timing
+	const uint64_t drain_tsc = rte_get_tsc_hz();			// Timer period in cycles (1s)
+	int last_run_stat = 0;									// lastime statistics printed
+	int last_run_file = 0;									// lastime statistics printed to file
+	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0;		// For throughput calculation
+	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0;		// For throughput calculation
+	double throughput_0 = 0.0, throughput_1 = 0.0;			// For throughput calculation
+	FILE *f_stat = NULL;									// File pointer for statistics
+
+	timer_tsc = 0;
+	prev_tsc = 0;
+
+	while (!force_quit)
+	{
+		// Get the current timestamp
+		cur_tsc = rte_rdtsc();
+
+		// Get the difference between the current timestamp and the previous timestamp
+		diff_tsc = cur_tsc - prev_tsc;
+
+		if (unlikely(diff_tsc > drain_tsc))
+		{
+			if (TIMER_PERIOD_STATS > 0)
+			{
+
+				timer_tsc += 1;
+
+				// Check if the difference is greater than the timer period
+				if (unlikely(timer_tsc >= TIMER_PERIOD_STATS))
+				{
+					printf("timer_tsc: %ld\n", timer_tsc);
+
+					// Get the statistics
+					rte_eth_stats_get(1, &stats_1);
+					rte_eth_stats_get(0, &stats_0);
+
+					// Update the statistics
+					port_statistics[1].rx_count = stats_1.ipackets;
+					port_statistics[1].tx_count = stats_1.opackets;
+					port_statistics[1].rx_size = stats_1.ibytes;
+					port_statistics[1].tx_size = stats_1.obytes;
+					port_statistics[1].dropped = stats_1.imissed;
+					port_statistics[0].rx_count = stats_0.ipackets;
+					port_statistics[0].tx_count = stats_0.opackets;
+					port_statistics[0].rx_size = stats_0.ibytes;
+					port_statistics[0].tx_size = stats_0.obytes;
+					port_statistics[0].dropped = stats_0.imissed;
+
+					// Calculate the throughput
+					port_statistics[1].throughput = port_statistics[1].rx_size/TIMER_PERIOD_STATS;
+					port_statistics[0].throughput = port_statistics[0].tx_size/TIMER_PERIOD_STATS;
+
+					// Print the statistics
+					print_stats();
+
+					// Reset the timer
+					timer_tsc = 0;	
+				}
+
+				// Print Statistcs to file
+				print_stats_file(&last_run_stat, &last_run_file, &f_stat);
+			}
+			// Reset the previous timestamp
+			prev_tsc = cur_tsc;
+		}
+	}
+}
+
+/*
+ * The lcore main process
+ * Running all the forwarding process including
+ * - Get the burst of RX packets
+ * - Check the packet type (HTTP or HTTPS)
+ * - Send the packet to the right port
+ * - Update the statistics
+ * - Free up the buffer
+ */
+static inline void
+lcore_main_process(void)
 {
 	// initialization
 	uint16_t port;
 	uint64_t timer_tsc = 0;
 	uint64_t packet_type;
 	uint16_t sent;
-	int last_run_stat = 0;
-	int last_run_file = 0;
-	FILE *f_stat = NULL;
-
-	/*
-	 * Check that the port is on the same NUMA node as the polling thread
-	 * for best performance.
-	 */
-	RTE_ETH_FOREACH_DEV(port)
-	if (rte_eth_dev_socket_id(port) >= 0 &&
-		rte_eth_dev_socket_id(port) !=
-			(int)rte_socket_id())
-		printf("WARNING, port %u is on remote NUMA node to "
-			   "polling thread.\n\tPerformance will "
-			   "not be optimal.\n",
-			   port);
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
@@ -526,10 +641,6 @@ lcore_main(void)
 		const uint16_t nb_rx = rte_eth_rx_burst(1, 0,
 												bufs, BURST_SIZE);
 
-		// Statistic for RX
-		port_statistics[1].rx_count += nb_rx;
-		port_statistics[1].tx_count = 0;
-
 		// if there is no packet, continue
 		if (unlikely(nb_rx == 0))
 			continue;
@@ -537,11 +648,9 @@ lcore_main(void)
 		// process the packet
 		for (int i = 0; i < nb_rx; i++)
 		{
-			// update the statistics
-			port_statistics[1].rx_size += rte_pktmbuf_pkt_len(bufs[i]);
 
 			// check the packet type
-			packet_type = packet_checker(&bufs[i], 1);
+			packet_type = packet_checker(&bufs[i]);
 
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
@@ -552,9 +661,7 @@ lcore_main(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].tx_count += sent;
 					port_statistics[0].httpMatch += sent;
-					port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -565,15 +672,13 @@ lcore_main(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].tx_count += sent;
 					port_statistics[0].httpsMatch += sent;
-					port_statistics[0].tx_size += rte_pktmbuf_pkt_len(bufs[i]);
 				}
 			}
 			else
 			{
-				// update the statistics
-				port_statistics[0].dropped += 1;
+				// no match
+				port_statistics[0].noMatch += 1;
 
 				// free up the buffer
 				rte_pktmbuf_free(bufs[i]);
@@ -582,38 +687,32 @@ lcore_main(void)
 
 		// free up the buffer
 		rte_pktmbuf_free(*bufs);
-
-		// Print Statistcs to file
-		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
-
-		/* if timer is enabled */
-		if (TIMER_PERIOD > 0)
-		{
-
-			/* advance the timer */
-			timer_tsc++;
-
-			/* if timer has reached its timeout */
-			if (timer_tsc >= TIMER_PERIOD)
-			{
-				/* do this only on main core */
-				print_stats();
-				/* reset the timer */
-				timer_tsc = 0;
-			}
-		}
 	}
 }
 
-// ======================================================= THE MAIN FUNCTION =======================================================
+/*
+ * The main function
+ * entry point of the application
+ * - Load the configuration file
+ * - Initialize the EAL
+ * - Initialize the ports
+ * - Assign the lcore
+ * - Run the lcore main function
+ * - Run the stats
+ * - Wait all lcore stopped
+ * - Clean up the EAL
+ * - Exit the application
+ */
 int main(int argc, char *argv[])
 {
 	struct rte_mempool *mbuf_pool;
 	unsigned nb_ports;
 	uint16_t portid;
+	unsigned lcore_id, lcore_main = 0, lcore_stats = 0;
 
 	// load the config file
-	if(load_config_file()){
+	if (load_config_file())
+	{
 		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
 	}
 
@@ -653,12 +752,47 @@ int main(int argc, char *argv[])
 				 portid);
 
 	// count the number of lcore
-	if (rte_lcore_count() > 1)
-		printf("\nWARNING: Too many lcores enabled. Only 1 used.\n");
+	if (rte_lcore_count() < 2)
+		rte_exit(EXIT_FAILURE, "lcore must be more than equal 2\n");
+
+	printf("assign lcore \n");
+
+	RTE_LCORE_FOREACH_WORKER(lcore_id)
+	{
+		if (lcore_id == (unsigned int)lcore_main ||
+			lcore_id == (unsigned int)lcore_stats)
+		{
+			printf("continue \n");
+			continue;
+		}
+		if (lcore_main == 0)
+		{
+			lcore_main = lcore_id;
+			printf("main on core %u\n", lcore_id);
+			continue;
+		}
+		if (lcore_stats == 0)
+		{
+			lcore_stats = lcore_id;
+			printf("Stats on core %u\n", lcore_id);
+			continue;
+		}
+	}
 
 	// run the lcore main function
-	lcore_main();
+	rte_eal_remote_launch((lcore_function_t *)lcore_main_process,
+						  NULL, lcore_main);
 
+	// run the stats
+	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
+						  NULL, lcore_stats);
+
+	// wait all lcore stopped
+	RTE_LCORE_FOREACH_WORKER(lcore_id)
+	{
+		if (rte_eal_wait_lcore(lcore_id) < 0)
+			return -1;
+	}
 	// clean up the EAL
 	rte_eal_cleanup();
 }
