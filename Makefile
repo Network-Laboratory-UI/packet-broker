@@ -28,9 +28,12 @@ stats:
 
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
 CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk)
+CFLAGSHS += $(shell $(PKGCONF) --cflags libhs)
+
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk)
 LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk)
 LDFLAGS_AGGREGATOR = $(shell $(PKGCONF) -lcurl -ljansson)
+LHSFLAGS = $(shell $(PKGCONF) --libs libhs)
 
 ifeq ($(MAKECMDGOALS),static)
 # check for broken pkg-config
@@ -43,10 +46,10 @@ endif
 CFLAGS += -DALLOW_EXPERIMENTAL_API
 
 build/$(APP)-shared: $(SRCS-pb) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) -lm $(LDFLAGS_SHARED) $(CFLAGSHS) $(LHSFLAGS)
 
 build/$(APP)-static: $(SRCS-pb) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_STATIC)
+	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) -lm $(LDFLAGS_STATIC) $(CFLAGSHS) $(LHSFLAGS)
 
 build/$(APP2): build
 	$(CC) $(SRCS-ag) -o $@ -lcurl -ljansson
