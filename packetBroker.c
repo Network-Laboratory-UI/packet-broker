@@ -16,6 +16,8 @@
 #include <signal.h>
 #include <stdbool.h>
 #include <time.h>
+#include <unistd.h>
+#include <curl/curl.h>
 
 // DPDK library
 #include <rte_eal.h>
@@ -554,6 +556,8 @@ lcore_stats_process(void)
 	timer_tsc = 0;
 	prev_tsc = 0;
 
+	printf("Starting stats process in %d\n", rte_lcore_id());
+
 	while (!force_quit)
 	{
 		// Get the current timestamp
@@ -631,6 +635,8 @@ lcore_main_process(void)
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
 
+	printf("Starting main process in %d\n", rte_lcore_id());
+
 	// Main work of application loop
 	while (!force_quit)
 	{
@@ -688,6 +694,41 @@ lcore_main_process(void)
 		// free up the buffer
 		rte_pktmbuf_free(*bufs);
 	}
+}
+
+size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
+    size_t real_size = size * nmemb;
+    printf("%.*s", (int)real_size, (char*)contents);
+    return real_size;
+}
+
+static inline void
+lcore_heartbeat_process(){
+    CURL *curl;
+    CURLcode res;
+
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
+
+    if(curl) {
+        while(!force_quit) {
+            curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.70:3000/npb/heartbeat");
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+
+            res = curl_easy_perform(curl);
+
+            if(res != CURLE_OK)
+                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+
+            sleep(5);
+        }
+
+        curl_easy_cleanup(curl);
+    }
+
+    curl_global_cleanup();
 }
 
 /*
@@ -786,6 +827,9 @@ int main(int argc, char *argv[])
 	// run the stats
 	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
 						  NULL, lcore_stats);
+
+	// run the heartbeat
+	lcore_heartbeat_process();
 
 	// wait all lcore stopped
 	RTE_LCORE_FOREACH_WORKER(lcore_id)

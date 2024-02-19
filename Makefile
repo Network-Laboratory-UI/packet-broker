@@ -43,10 +43,10 @@ endif
 CFLAGS += -DALLOW_EXPERIMENTAL_API
 
 build/$(APP)-shared: $(SRCS-pb) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED)
+	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_SHARED) -lcurl -ljansson
 
 build/$(APP)-static: $(SRCS-pb) Makefile $(PC_FILE) | build
-	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_STATIC)
+	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_STATIC) -lcurl -ljansson
 
 build/$(APP2): build
 	$(CC) $(SRCS-ag) -o $@ -lcurl -ljansson
