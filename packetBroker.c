@@ -88,19 +88,55 @@ struct port_statistics_data
 	uint64_t httpsMatch;
 	long int throughput;
 	uint64_t noMatch;
+	uint64_t err_rx;
+	uint64_t err_tx;
+	uint64_t mbuf_err;
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
 struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
 
 /*
-* The port initialization function
-* Initialize the port with the given port number and mbuf pool
-* @param port 
-* 	the port number
-* @param mbuf_pool 
-* 	pointer to a memory pool of mbufs (memory buffers)
-*/
+ * The port initialization function
+ * Initialize the port with the given port number and mbuf pool
+ * @param port
+ * 	the port number
+ * @param mbuf_pool
+ * 	pointer to a memory pool of mbufs (memory buffers)
+ */
+
+void logMessage(const char *filename, int line, const char *format, ...)
+{
+	// Open the log file in append mode
+	FILE *file = fopen("logs/log.txt", "a");
+	if (file == NULL)
+	{
+		printf("Error opening file %s\n", filename);
+		return;
+	}
+
+	// Get the current time
+	time_t rawtime;
+	struct tm *timeinfo;
+	char timestamp[20];
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+	// Write the timestamp to the file
+	// fprintf(file, "[%s] ", timestamp);
+	fprintf(file, "[%s] [%s:%d] - ", timestamp, filename, line);
+
+	// Write the formatted message to the file
+	va_list args;
+	va_start(args, format);
+	vfprintf(file, format, args);
+	va_end(args);
+
+	// Close the file
+	fclose(file);
+}
+
 static inline int
 port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
@@ -187,26 +223,28 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 }
 
 /*
-* The open file function
-* Open the file with the given filename
-* @param filename
-* 	the name of the file
-*/
+ * The open file function
+ * Open the file with the given filename
+ * @param filename
+ * 	the name of the file
+ */
 static FILE *open_file(const char *filename)
 {
+	logMessage(__FILE__, __LINE__, "Opening file %s\n", filename);
 	FILE *f = fopen(filename, "a+");
 	if (f == NULL)
 	{
+		logMessage(__FILE__, __LINE__, "Error opening file %s\n", filename);
 		printf("Error opening file!\n");
-		exit(1);
+		rte_exit(EXIT_FAILURE, "Error opening file %s\n", filename);
 	}
 	return f;
 }
 
 /*
-* The print statistics function
-* Print the statistics to the console
-*/
+ * The print statistics function
+ * Print the statistics to the console
+ */
 static void
 print_stats(void)
 {
@@ -234,7 +272,10 @@ print_stats(void)
 			   "\nHTTP GET match: %22" PRIu64
 			   "\nTLS CLIENT HELLO match: %14" PRIu64
 			   "\nNo match: %28" PRIu64
-			   "\nThroughput: %26" PRId64,
+			   "\nThroughput: %26" PRId64
+			   "\nPacket errors rx: %20" PRIu64
+			   "\nPacket errors tx: %20" PRIu64
+			   "\nPacket mbuf errors: %18" PRIu64,
 			   portid,
 			   port_statistics[portid].tx_count,
 			   port_statistics[portid].tx_size,
@@ -244,7 +285,10 @@ print_stats(void)
 			   port_statistics[portid].httpMatch,
 			   port_statistics[portid].httpsMatch,
 			   port_statistics[portid].noMatch,
-			   port_statistics[portid].throughput);
+			   port_statistics[portid].throughput,
+			   port_statistics[portid].err_rx,
+			   port_statistics[portid].err_tx,
+			   port_statistics[portid].mbuf_err);
 	}
 	printf("\n=====================================================");
 
@@ -252,32 +296,32 @@ print_stats(void)
 }
 
 /*
-* The print statistics csv header function
-* Print the header of the statistics to the csv file
-* @param f
-* 	the file pointer
-*/
+ * The print statistics csv header function
+ * Print the header of the statistics to the csv file
+ * @param f
+ * 	the file pointer
+ */
 static void print_stats_csv_header(FILE *f)
 {
-	fprintf(f, "npb_id,http_count,https_count,rx_count,tx_count,rx_size,tx_size,time,throughput\n"); // Header row
+	fprintf(f, "npb_id,http_count,https_count,no_match,rx_0_count,tx_0_count,rx_0_size,tx_0_size,rx_0_drop,rx_0_error,tx_0_error,rx_0_mbuf,rx_1_count,tx_1_count,rx_1_size,tx_1_size,rx_1_drop,rx_1_error,tx_1_error,rx_1_mbuf,time,throughput\n"); // Header row
 }
 
 /*
-* The print statistics csv function
-* Print the statistics to the csv file
-* @param f
-* 	the file pointer
-*/
+ * The print statistics csv function
+ * Print the statistics to the csv file
+ * @param f
+ * 	the file pointer
+ */
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[1].rx_count, port_statistics[0].tx_count, port_statistics[1].rx_size, port_statistics[0].tx_size, timestamp, port_statistics[1].throughput);
+	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput);
 }
 
 /*
-* The clear statistics function
-* Clear the statistics
-*/
+ * The clear statistics function
+ * Clear the statistics
+ */
 static void clear_stats(void)
 {
 	rte_eth_stats_reset(0);
@@ -286,12 +330,12 @@ static void clear_stats(void)
 }
 
 /*
-* The load configuration file function
-* Load the configuration file
-*/
+ * The load configuration file function
+ * Load the configuration file
+ */
 int load_config_file()
 {
-	FILE *configFile = fopen("config/packetBroker.cfg", "r");
+	FILE *configFile = fopen("config/config.cfg", "r");
 	if (configFile == NULL)
 	{
 		printf("Error opening configuration file");
@@ -369,13 +413,13 @@ int load_config_file()
 }
 
 /*
-* The packet checker function
-* Check the packet type
-* @param pkt
-* 	the packet
-* @param nb_rx
-* 	the number of packets
-*/
+ * The packet checker function
+ * Check the packet type
+ * @param pkt
+ * 	the packet
+ * @param nb_rx
+ * 	the number of packets
+ */
 static int packet_checker(struct rte_mbuf **pkt)
 {
 	// Define Variable
@@ -512,7 +556,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			strcat(filename, STAT_FILE);
 			strcat(filename, time_str);
 			strcat(filename, STAT_FILE_EXT);
-			printf("open file");
 			*f_stat = open_file(filename);
 
 			// print the header of the statistics file
@@ -544,73 +587,50 @@ static inline void
 lcore_stats_process(void)
 {
 	// Variable declaration
-	uint64_t prev_tsc, diff_tsc, cur_tsc, timer_tsc; 		// For timing
-	const uint64_t drain_tsc = rte_get_tsc_hz();			// Timer period in cycles (1s)
-	int last_run_stat = 0;									// lastime statistics printed
-	int last_run_file = 0;									// lastime statistics printed to file
-	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0;		// For throughput calculation
-	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0;		// For throughput calculation
-	double throughput_0 = 0.0, throughput_1 = 0.0;			// For throughput calculation
-	FILE *f_stat = NULL;									// File pointer for statistics
-
-	timer_tsc = 0;
-	prev_tsc = 0;
+	int last_run_stat = 0;							 // lastime statistics printed
+	int last_run_file = 0;							 // lastime statistics printed to file
+	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0; // For throughput calculation
+	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0; // For throughput calculation
+	double throughput_0 = 0.0, throughput_1 = 0.0;	 // For throughput calculation
+	FILE *f_stat = NULL;							 // File pointer for statistics
 
 	printf("Starting stats process in %d\n", rte_lcore_id());
 
 	while (!force_quit)
 	{
-		// Get the current timestamp
-		cur_tsc = rte_rdtsc();
+		// Get the statistics
+		rte_eth_stats_get(1, &stats_1);
+		rte_eth_stats_get(0, &stats_0);
 
-		// Get the difference between the current timestamp and the previous timestamp
-		diff_tsc = cur_tsc - prev_tsc;
+		// Update the statistics
+		port_statistics[1].rx_count = stats_1.ipackets;
+		port_statistics[1].tx_count = stats_1.opackets;
+		port_statistics[1].rx_size = stats_1.ibytes;
+		port_statistics[1].tx_size = stats_1.obytes;
+		port_statistics[1].dropped = stats_1.imissed;
+		port_statistics[1].err_rx = stats_1.ierrors;
+		port_statistics[1].err_tx = stats_1.oerrors;
+		port_statistics[1].mbuf_err = stats_1.rx_nombuf;
+		port_statistics[0].rx_count = stats_0.ipackets;
+		port_statistics[0].tx_count = stats_0.opackets;
+		port_statistics[0].rx_size = stats_0.ibytes;
+		port_statistics[0].tx_size = stats_0.obytes;
+		port_statistics[0].dropped = stats_0.imissed;
+		port_statistics[0].err_rx = stats_0.ierrors;
+		port_statistics[0].err_tx = stats_0.oerrors;
+		port_statistics[0].mbuf_err = stats_0.rx_nombuf;
 
-		if (unlikely(diff_tsc > drain_tsc))
-		{
-			if (TIMER_PERIOD_STATS > 0)
-			{
+		// Calculate the throughput
+		port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
+		port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
 
-				timer_tsc += 1;
+		// Print the statistics
+		print_stats();
 
-				// Check if the difference is greater than the timer period
-				if (unlikely(timer_tsc >= TIMER_PERIOD_STATS))
-				{
-					printf("timer_tsc: %ld\n", timer_tsc);
+		// Print Statistcs to file
+		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
 
-					// Get the statistics
-					rte_eth_stats_get(1, &stats_1);
-					rte_eth_stats_get(0, &stats_0);
-
-					// Update the statistics
-					port_statistics[1].rx_count = stats_1.ipackets;
-					port_statistics[1].tx_count = stats_1.opackets;
-					port_statistics[1].rx_size = stats_1.ibytes;
-					port_statistics[1].tx_size = stats_1.obytes;
-					port_statistics[1].dropped = stats_1.imissed;
-					port_statistics[0].rx_count = stats_0.ipackets;
-					port_statistics[0].tx_count = stats_0.opackets;
-					port_statistics[0].rx_size = stats_0.ibytes;
-					port_statistics[0].tx_size = stats_0.obytes;
-					port_statistics[0].dropped = stats_0.imissed;
-
-					// Calculate the throughput
-					port_statistics[1].throughput = port_statistics[1].rx_size/TIMER_PERIOD_STATS;
-					port_statistics[0].throughput = port_statistics[0].tx_size/TIMER_PERIOD_STATS;
-
-					// Print the statistics
-					print_stats();
-
-					// Reset the timer
-					timer_tsc = 0;	
-				}
-
-				// Print Statistcs to file
-				print_stats_file(&last_run_stat, &last_run_file, &f_stat);
-			}
-			// Reset the previous timestamp
-			prev_tsc = cur_tsc;
-		}
+		usleep(1000000);
 	}
 }
 
@@ -696,39 +716,45 @@ lcore_main_process(void)
 	}
 }
 
-size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp) {
-    size_t real_size = size * nmemb;
-    printf("%.*s", (int)real_size, (char*)contents);
-    return real_size;
+size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
+{
+	size_t real_size = size * nmemb;
+	logMessage(__FILE__, __LINE__, "Heartbeat Response: %.*s \n", (int)real_size, (char *)contents);
+	return real_size;
 }
 
 static inline void
-lcore_heartbeat_process(){
-    CURL *curl;
-    CURLcode res;
+lcore_heartbeat_process()
+{
+	CURL *curl;
+	CURLcode res;
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    curl = curl_easy_init();
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	curl = curl_easy_init();
 
-    if(curl) {
-        while(!force_quit) {
-            curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.70:3000/npb/heartbeat");
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+	if (curl)
+	{
+		while (!force_quit)
+		{
+			curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.70:3000/npb/heartbeat");
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
 
 			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 
-            res = curl_easy_perform(curl);
+			res = curl_easy_perform(curl);
 
-            if(res != CURLE_OK)
-                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+			if (res != CURLE_OK)
+			{
+				fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+				logMessage(__FILE__, __LINE__, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+			}
+			sleep(5);
+		}
 
-            sleep(5);
-        }
+		curl_easy_cleanup(curl);
+	}
 
-        curl_easy_cleanup(curl);
-    }
-
-    curl_global_cleanup();
+	curl_global_cleanup();
 }
 
 /*
@@ -751,16 +777,24 @@ int main(int argc, char *argv[])
 	uint16_t portid;
 	unsigned lcore_id, lcore_main = 0, lcore_stats = 0;
 
+	// log the starting of the application
+	logMessage(__FILE__, __LINE__, "Starting the application\n");
+
 	// load the config file
 	if (load_config_file())
 	{
+		logMessage(__FILE__, __LINE__, "Cannot load the config file\n");
 		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
 	}
+	logMessage(__FILE__, __LINE__, "Load config done\n");
 
 	// Initializion the Environment Abstraction Layer (EAL)
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
+	{
+		logMessage(__FILE__, __LINE__, "Error with EAL initialization\n");
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
+	}
 
 	argc -= ret;
 	argv += ret;
@@ -772,11 +806,15 @@ int main(int argc, char *argv[])
 
 	// clean the data
 	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
+	logMessage(__FILE__, __LINE__, "Clean the statistics data\n");
 
 	// count the number of ports to send and receive
 	nb_ports = rte_eth_dev_count_avail();
 	if (nb_ports < 2 || (nb_ports & 1))
+	{
+		logMessage(__FILE__, __LINE__, "Error: number of ports must be even\n");
 		rte_exit(EXIT_FAILURE, "Error: number of ports must be even\n");
+	}
 
 	// allocates the mempool to hold the mbufs
 	mbuf_pool = rte_pktmbuf_pool_create("MBUF_POOL", NUM_MBUFS * nb_ports,
@@ -784,17 +822,26 @@ int main(int argc, char *argv[])
 
 	// check the mempool allocation
 	if (mbuf_pool == NULL)
+	{
+		logMessage(__FILE__, __LINE__, "Cannot create mbuf pool\n");
 		rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
+	}
+	logMessage(__FILE__, __LINE__, "Create mbuf pool done\n");
 
 	// initializing ports
 	RTE_ETH_FOREACH_DEV(portid)
 	if (port_init(portid, mbuf_pool) != 0)
-		rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n",
-				 portid);
+	{
+		logMessage(__FILE__, __LINE__, "Cannot init port %" PRIu16 "\n", portid);
+		rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", portid);
+	}
 
 	// count the number of lcore
-	if (rte_lcore_count() < 2)
-		rte_exit(EXIT_FAILURE, "lcore must be more than equal 2\n");
+	if (rte_lcore_count() < 3)
+	{
+		logMessage(__FILE__, __LINE__, "lcore must be more than equal 3\n");
+		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
+	}
 
 	printf("assign lcore \n");
 
@@ -803,32 +850,34 @@ int main(int argc, char *argv[])
 		if (lcore_id == (unsigned int)lcore_main ||
 			lcore_id == (unsigned int)lcore_stats)
 		{
-			printf("continue \n");
 			continue;
 		}
 		if (lcore_main == 0)
 		{
 			lcore_main = lcore_id;
-			printf("main on core %u\n", lcore_id);
+			logMessage(__FILE__, __LINE__, "Main on core %u\n", lcore_id);
 			continue;
 		}
 		if (lcore_stats == 0)
 		{
 			lcore_stats = lcore_id;
-			printf("Stats on core %u\n", lcore_id);
+			logMessage(__FILE__, __LINE__, "Stats on core %u\n", lcore_id);
 			continue;
 		}
 	}
 
 	// run the lcore main function
+	logMessage(__FILE__, __LINE__, "Run the lcore main function\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_main_process,
 						  NULL, lcore_main);
 
 	// run the stats
+	logMessage(__FILE__, __LINE__, "Run the stats\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
 						  NULL, lcore_stats);
 
 	// run the heartbeat
+	logMessage(__FILE__, __LINE__, "Run the heartbeat\n");
 	lcore_heartbeat_process();
 
 	// wait all lcore stopped
