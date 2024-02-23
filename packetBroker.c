@@ -31,13 +31,6 @@
 // ======================================================= THE DEFINE =======================================================
 
 // Define the limit of
-// #define MAX_PACKET_LEN 1500
-// #define RX_RING_SIZE 1024
-// #define TX_RING_SIZE 1024
-// #define NUM_MBUFS 8191
-// #define MBUF_CACHE_SIZE 250
-// #define BURST_SIZE 32
-// #define MAX_TCP_PAYLOAD_LEN 1024
 uint32_t MAX_PACKET_LEN;
 uint32_t RX_RING_SIZE;
 uint32_t TX_RING_SIZE;
@@ -45,12 +38,14 @@ uint32_t NUM_MBUFS;
 uint32_t MBUF_CACHE_SIZE;
 uint32_t BURST_SIZE;
 uint32_t MAX_TCP_PAYLOAD_LEN;
+uint32_t NPB_ID;
 
 // Define the statistics file name
 // #define STAT_FILE "stats/stats"
 // #define STAT_FILE_EXT ".csv"
 char STAT_FILE[100];
 char STAT_FILE_EXT[100];
+char HOSTNAME[100];
 
 // Define period to print stats
 
@@ -97,14 +92,15 @@ struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
 
 /*
- * The port initialization function
- * Initialize the port with the given port number and mbuf pool
- * @param port
- * 	the port number
- * @param mbuf_pool
- * 	pointer to a memory pool of mbufs (memory buffers)
- */
-
+* The log message function
+* Log the message to the log file
+* @param filename
+* 	the name of the file
+* @param line
+* 	the line of the file
+* @param format
+* 	the format of the message
+*/
 void logMessage(const char *filename, int line, const char *format, ...)
 {
 	// Open the log file in append mode
@@ -137,6 +133,14 @@ void logMessage(const char *filename, int line, const char *format, ...)
 	fclose(file);
 }
 
+/*
+ * The port initialization function
+ * Initialize the port with the given port number and mbuf pool
+ * @param port
+ * 	the port number
+ * @param mbuf_pool
+ * 	pointer to a memory pool of mbufs (memory buffers)
+ */
 static inline int
 port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 {
@@ -353,57 +357,67 @@ int load_config_file()
 			if (strcmp(key, "MAX_PACKET_LEN") == 0)
 			{
 				MAX_PACKET_LEN = atoi(value);
-				printf("MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
+				logMessage(__FILE__, __LINE__, "MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
 			}
 			else if (strcmp(key, "RX_RING_SIZE") == 0)
 			{
 				RX_RING_SIZE = atoi(value);
-				printf("RX_RING_SIZE: %d\n", RX_RING_SIZE);
+				logMessage(__FILE__, __LINE__, "RX_RING_SIZE: %d\n", RX_RING_SIZE);
 			}
 			else if (strcmp(key, "TX_RING_SIZE") == 0)
 			{
 				TX_RING_SIZE = atoi(value);
-				printf("TX_RING_SIZE: %d\n", TX_RING_SIZE);
+				logMessage(__FILE__, __LINE__, "TX_RING_SIZE: %d\n", TX_RING_SIZE);
 			}
 			else if (strcmp(key, "NUM_MBUFS") == 0)
 			{
 				NUM_MBUFS = atoi(value);
-				printf("NUM_MBUFS: %d\n", NUM_MBUFS);
+				logMessage(__FILE__, __LINE__, "NUM_MBUFS: %d\n", NUM_MBUFS);
 			}
 			else if (strcmp(key, "MBUF_CACHE_SIZE") == 0)
 			{
 				MBUF_CACHE_SIZE = atoi(value);
-				printf("MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
+				logMessage(__FILE__, __LINE__, "MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
 			}
 			else if (strcmp(key, "BURST_SIZE") == 0)
 			{
 				BURST_SIZE = atoi(value);
-				printf("BURST_SIZE: %d\n", BURST_SIZE);
+				logMessage(__FILE__, __LINE__, "BURST_SIZE: %d\n", BURST_SIZE);
 			}
 			else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0)
 			{
 				MAX_TCP_PAYLOAD_LEN = atoi(value);
-				printf("MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
+				logMessage(__FILE__, __LINE__, "MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
 			}
 			else if (strcmp(key, "STAT_FILE") == 0)
 			{
 				strcpy(STAT_FILE, value);
-				printf("STAT_FILE: %s\n", STAT_FILE);
+		 		logMessage(__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
 			}
 			else if (strcmp(key, "STAT_FILE_EXT") == 0)
 			{
 				strcpy(STAT_FILE_EXT, value);
-				printf("STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
+				logMessage(__FILE__, __LINE__, "STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_STATS") == 0)
 			{
 				TIMER_PERIOD_STATS = atoi(value);
-				printf("TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
+				logMessage(__FILE__, __LINE__, "TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_SEND") == 0)
 			{
 				TIMER_PERIOD_SEND = atoi(value);
-				printf("TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
+				logMessage(__FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
+			}
+			else if (strcmp(key, "ID") == 0)
+			{
+				NPB_ID = atoi(value);
+				logMessage(__FILE__, __LINE__, "NPB ID: %d\n", NPB_ID);
+			}
+			else if (strcmp(key, "HOSTNAME") == 0)
+			{
+				strcpy(HOSTNAME, value);
+				logMessage(__FILE__, __LINE__, "HOSTNAME: %s\n", HOSTNAME);
 			}
 		}
 	}
@@ -477,9 +491,13 @@ static int packet_checker(struct rte_mbuf **pkt)
 	// return if there is no IP packet
 	return 0;
 }
-// END OF PACKET PROCESSING AND CHECKING
 
-// TERMINATION SIGNAL HANDLER
+/*
+* The termination signal handler
+* Handle the termination signal
+* @param signum
+* 	the signal number
+*/
 static void
 signal_handler(int signum)
 {
@@ -490,9 +508,17 @@ signal_handler(int signum)
 		force_quit = true;
 	}
 }
-// END OF TERMINATION SIGNAL HANDLER
 
-// PRINT STATISTICS PROCESS
+/*
+ * The print statistics file function
+ * Print the statistics to the file
+ * @param last_run_stat
+ * 	the last run statistics
+ * @param last_run_file
+ * 	the last run file
+ * @param f_stat
+ * 	the file pointer
+ */
 static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat)
 {
 	int current_sec;
@@ -630,7 +656,7 @@ lcore_stats_process(void)
 		// Print Statistcs to file
 		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
 
-		usleep(1000000);
+		usleep(1000000*TIMER_PERIOD_STATS);
 	}
 }
 
@@ -716,6 +742,18 @@ lcore_main_process(void)
 	}
 }
 
+/*
+ * The write callback function
+ * Write the callback function for the heartbeat
+ * @param contents
+ * 	the contents
+ * @param size
+ * 	the size
+ * @param nmemb
+ * 	the nmemb
+ * @param userp
+ * 	the userp
+ */
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t real_size = size * nmemb;
@@ -723,38 +761,62 @@ size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
 	return real_size;
 }
 
+/*
+ * The lcore heartbeat process
+ * Running the heartbeat process
+ * - Send the heartbeat to the server
+ * - Sleep for 5 seconds
+ */
 static inline void
 lcore_heartbeat_process()
 {
-	CURL *curl;
-	CURLcode res;
+    CURL *curl;
+    CURLcode res;
+    char post_fields[256];
+	char url[256];
+    char timestamp_str[25];
+    time_t timestamp;
+    struct tm *tm_info;
+    struct curl_slist *headers = NULL;
 
-	curl_global_init(CURL_GLOBAL_DEFAULT);
-	curl = curl_easy_init();
+	sprintf(url, "%s/npb/heartbeat", HOSTNAME);
 
-	if (curl)
-	{
-		while (!force_quit)
-		{
-			curl_easy_setopt(curl, CURLOPT_URL, "http://192.168.0.70:3000/npb/heartbeat");
-			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, "");
+    curl_global_init(CURL_GLOBAL_DEFAULT);
+    curl = curl_easy_init();
 
-			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+    if (curl)
+    {
+        headers = curl_slist_append(headers, "Content-Type: application/json");
 
-			res = curl_easy_perform(curl);
+        while (!force_quit)
+        {
+            timestamp = time(NULL);
+            tm_info = gmtime(&timestamp);
+            strftime(timestamp_str, 25, "%Y-%m-%dT%H:%M:%S.000Z", tm_info);
 
-			if (res != CURLE_OK)
-			{
-				fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-				logMessage(__FILE__, __LINE__, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-			}
-			sleep(5);
-		}
+            sprintf(post_fields, "[{\"npb_id\": %d, \"time\": \"%s\"}]", NPB_ID, timestamp_str);
 
-		curl_easy_cleanup(curl);
-	}
+            curl_easy_setopt(curl, CURLOPT_URL, url);
+            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
+            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-	curl_global_cleanup();
+            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+
+            res = curl_easy_perform(curl);
+
+            if (res != CURLE_OK)
+            {
+                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+                logMessage(__FILE__, __LINE__, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            }
+            sleep(5);
+        }
+
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+    }	
+
+    curl_global_cleanup();
 }
 
 /*
@@ -889,5 +951,3 @@ int main(int argc, char *argv[])
 	// clean up the EAL
 	rte_eal_cleanup();
 }
-
-// END OF MAIN FUNCTION
