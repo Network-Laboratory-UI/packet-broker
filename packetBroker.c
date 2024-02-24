@@ -18,6 +18,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <curl/curl.h>
+#include <jansson.h>
 
 // DPDK library
 #include <rte_eal.h>
@@ -107,7 +108,7 @@ void logMessage(const char *filename, int line, const char *format, ...)
 	FILE *file = fopen("logs/log.txt", "a");
 	if (file == NULL)
 	{
-		printf("Error opening file %s\n", filename);
+		logMessage(__FILE__, __LINE__, "Error opening file %s\n", filename);
 		return;
 	}
 
@@ -165,7 +166,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	retval = rte_eth_dev_info_get(port, &dev_info);
 	if (retval != 0)
 	{
-		printf("Error during getting device (port %u) info: %s\n",
+	 	logMessage(__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
 			   port, strerror(-retval));
 		return retval;
 	}
@@ -214,7 +215,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	if (retval != 0)
 		return retval;
 
-	printf("Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
+	logMessage(__FILE__, __LINE__, "Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
 		   " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
 		   port, RTE_ETHER_ADDR_BYTES(&addr));
 
@@ -239,7 +240,6 @@ static FILE *open_file(const char *filename)
 	if (f == NULL)
 	{
 		logMessage(__FILE__, __LINE__, "Error opening file %s\n", filename);
-		printf("Error opening file!\n");
 		rte_exit(EXIT_FAILURE, "Error opening file %s\n", filename);
 	}
 	return f;
@@ -342,7 +342,7 @@ int load_config_file()
 	FILE *configFile = fopen("config/config.cfg", "r");
 	if (configFile == NULL)
 	{
-		printf("Error opening configuration file");
+		logMessage(__FILE__, __LINE__, "Cannot open the config file\n");
 		return 1;
 	}
 
@@ -503,10 +503,42 @@ signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM)
 	{
-		printf("\n\nSignal %d received, preparing to exit...\n",
-			   signum);
+		logMessage(__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
 	}
+}
+
+static void
+populate_json_array(json_t *jsonArray, char *timestamp){
+	// Create object for the statistics
+	json_t *jsonObject = json_object();
+
+	// Populate the JSON object
+	json_object_set(jsonObject, "npb_id", json_integer(NPB_ID));
+	json_object_set(jsonObject, "http_count", json_integer(port_statistics[0].httpMatch));
+	json_object_set(jsonObject, "https_count", json_integer(port_statistics[0].httpsMatch));
+	json_object_set(jsonObject, "no_match", json_integer(port_statistics[0].noMatch));
+	json_object_set(jsonObject, "rx_0_count", json_integer(port_statistics[0].rx_count));
+	json_object_set(jsonObject, "tx_0_count", json_integer(port_statistics[0].tx_count));
+	json_object_set(jsonObject, "rx_0_size", json_integer(port_statistics[0].rx_size));
+	json_object_set(jsonObject, "tx_0_size", json_integer(port_statistics[0].tx_size));
+	json_object_set(jsonObject, "rx_0_drop", json_integer(port_statistics[0].dropped));
+	json_object_set(jsonObject, "rx_0_error", json_integer(port_statistics[0].err_rx));
+	json_object_set(jsonObject, "tx_0_error", json_integer(port_statistics[0].err_tx));
+	json_object_set(jsonObject, "rx_0_mbuf", json_integer(port_statistics[0].mbuf_err));
+	json_object_set(jsonObject, "rx_1_count", json_integer(port_statistics[1].rx_count));
+	json_object_set(jsonObject, "tx_1_count", json_integer(port_statistics[1].tx_count));
+	json_object_set(jsonObject, "rx_1_size", json_integer(port_statistics[1].rx_size));
+	json_object_set(jsonObject, "tx_1_size", json_integer(port_statistics[1].tx_size));
+	json_object_set(jsonObject, "rx_1_drop", json_integer(port_statistics[1].dropped));
+	json_object_set(jsonObject, "rx_1_error", json_integer(port_statistics[1].err_rx));
+	json_object_set(jsonObject, "tx_1_error", json_integer(port_statistics[1].err_tx));
+	json_object_set(jsonObject, "rx_1_mbuf", json_integer(port_statistics[1].mbuf_err));
+	json_object_set(jsonObject, "time", json_string(timestamp));
+	json_object_set(jsonObject, "throughput", json_integer(port_statistics[1].throughput));
+
+	// Append the JSON object to the JSON array
+	json_array_append(jsonArray, jsonObject);
 }
 
 /*
@@ -519,7 +551,7 @@ signal_handler(int signum)
  * @param f_stat
  * 	the file pointer
  */
-static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat)
+static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_stat, json_t *jsonArray)
 {
 	int current_sec;
 	char time_str[80];
@@ -571,6 +603,7 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 
 		// print out the stats to csv
 		print_stats_csv(*f_stat, time_str);
+		populate_json_array(jsonArray,time_str);
 		fflush(*f_stat);
 
 		// clear the stats
@@ -599,6 +632,64 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 	}
 }
 
+static void
+send_stats_to_server(json_t *jsonArray)
+{
+	CURL *curl;
+	CURLcode res;
+	struct curl_slist *headers = curl_slist_append(headers, "Content-Type: application/json");;
+	char *jsonString = json_dumps(jsonArray, 0);
+	char url[256];
+
+	sprintf(url, "%s/npb/npb-packet", HOSTNAME);
+
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	curl = curl_easy_init();
+
+	if (curl)
+	{
+		headers = curl_slist_append(headers, "Content-Type: application/json");
+
+		curl_easy_setopt(curl, CURLOPT_URL, url);
+		curl_easy_setopt(curl, CURLOPT_POSTFIELDS, jsonString);
+		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+		res = curl_easy_perform(curl);
+
+		if (res != CURLE_OK)
+		{
+			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+			logMessage(__FILE__, __LINE__, "Send Stats failed: %s\n", curl_easy_strerror(res));
+		}
+
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+		free(jsonString);
+		json_array_clear(jsonArray);
+	}
+
+	curl_global_cleanup();
+}
+
+static void
+send_stats(json_t *jsonArray, int *last_run_send){
+
+	// Get the current time
+	time_t rawtime;
+	struct tm *timeinfo;
+	char timestamp[20];
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+
+	int current_min = timeinfo->tm_min;
+	if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_send){
+		// send the statistics to the server
+		logMessage(__FILE__, __LINE__, "Sending statistics to server\n");
+		send_stats_to_server(jsonArray);
+		*last_run_send = current_min;
+	}
+}
+
 /*
  * The lcore stast process
  * Running all the stats process including
@@ -615,12 +706,14 @@ lcore_stats_process(void)
 	// Variable declaration
 	int last_run_stat = 0;							 // lastime statistics printed
 	int last_run_file = 0;							 // lastime statistics printed to file
+	int last_run_send = 0;							 // lastime statistics sent to server
 	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0; // For throughput calculation
 	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0; // For throughput calculation
 	double throughput_0 = 0.0, throughput_1 = 0.0;	 // For throughput calculation
 	FILE *f_stat = NULL;							 // File pointer for statistics
+	json_t *jsonArray = json_array();				 // JSON array for statistics
 
-	printf("Starting stats process in %d\n", rte_lcore_id());
+	logMessage(__FILE__, __LINE__, "Starting stats process in %d\n", rte_lcore_id());
 
 	while (!force_quit)
 	{
@@ -653,10 +746,13 @@ lcore_stats_process(void)
 		// Print the statistics
 		print_stats();
 
-		// Print Statistcs to file
-		print_stats_file(&last_run_stat, &last_run_file, &f_stat);
+		// Send stats
+		send_stats(jsonArray, &last_run_send);
 
-		usleep(1000000*TIMER_PERIOD_STATS);
+		// Print Statistcs to file
+		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
+
+		usleep(1000000);
 	}
 }
 
@@ -679,9 +775,8 @@ lcore_main_process(void)
 	uint16_t sent;
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
-		   rte_lcore_id());
-
-	printf("Starting main process in %d\n", rte_lcore_id());
+		   rte_lcore_id()); 
+	logMessage(__FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
 
 	// Main work of application loop
 	while (!force_quit)
@@ -806,8 +901,7 @@ lcore_heartbeat_process()
 
             if (res != CURLE_OK)
             {
-                fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-                logMessage(__FILE__, __LINE__, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+                logMessage(__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
             }
             sleep(5);
         }
@@ -904,8 +998,6 @@ int main(int argc, char *argv[])
 		logMessage(__FILE__, __LINE__, "lcore must be more than equal 3\n");
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
 	}
-
-	printf("assign lcore \n");
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
