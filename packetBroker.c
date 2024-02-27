@@ -19,6 +19,7 @@
 #include <unistd.h>
 #include <curl/curl.h>
 #include <jansson.h>
+#include <pthread.h>
 
 // DPDK library
 #include <rte_eal.h>
@@ -93,15 +94,15 @@ struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
 
 /*
-* The log message function
-* Log the message to the log file
-* @param filename
-* 	the name of the file
-* @param line
-* 	the line of the file
-* @param format
-* 	the format of the message
-*/
+ * The log message function
+ * Log the message to the log file
+ * @param filename
+ * 	the name of the file
+ * @param line
+ * 	the line of the file
+ * @param format
+ * 	the format of the message
+ */
 void logMessage(const char *filename, int line, const char *format, ...)
 {
 	// Open the log file in append mode
@@ -166,8 +167,8 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	retval = rte_eth_dev_info_get(port, &dev_info);
 	if (retval != 0)
 	{
-	 	logMessage(__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
-			   port, strerror(-retval));
+		logMessage(__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
+				   port, strerror(-retval));
 		return retval;
 	}
 
@@ -215,9 +216,8 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	if (retval != 0)
 		return retval;
 
-	logMessage(__FILE__, __LINE__, "Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8
-		   " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
-		   port, RTE_ETHER_ADDR_BYTES(&addr));
+	logMessage(__FILE__, __LINE__, "Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
+			   port, RTE_ETHER_ADDR_BYTES(&addr));
 
 	// SET THE PORT TO PROMOCIOUS
 	retval = rte_eth_promiscuous_enable(port);
@@ -250,53 +250,63 @@ static FILE *open_file(const char *filename)
  * Print the statistics to the console
  */
 static void
-print_stats(void)
+print_stats(int *last_run_print)
 {
 	unsigned int portid;
 
 	const char clr[] = {27, '[', '2', 'J', '\0'};
 	const char topLeft[] = {27, '[', '1', ';', '1', 'H', '\0'};
 
-	// Clear screen and move to top left
-	printf("%s%s", clr, topLeft);
-	printf("PACKET BORKER\n");
-	printf("\nRefreshed every %d seconds. "
-		   "Send every %d minutes.\n",
-		   TIMER_PERIOD_STATS, TIMER_PERIOD_SEND);
-	printf("\nPort statistics ====================================");
+	// set timer
+	time_t rawtime;
+	struct tm *timeinfo;
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
 
-	for (portid = 0; portid < 2; portid++)
+	if (timeinfo->tm_sec % TIMER_PERIOD_STATS == 0 && timeinfo->tm_sec != *last_run_print)
 	{
-		printf("\nStatistics for port %u ------------------------------"
-			   "\nPackets sent count: %18" PRIu64
-			   "\nPackets sent size: %19" PRIu64
-			   "\nPackets received count: %14" PRIu64
-			   "\nPackets received size: %15" PRIu64
-			   "\nPackets dropped: %21" PRIu64
-			   "\nHTTP GET match: %22" PRIu64
-			   "\nTLS CLIENT HELLO match: %14" PRIu64
-			   "\nNo match: %28" PRIu64
-			   "\nThroughput: %26" PRId64
-			   "\nPacket errors rx: %20" PRIu64
-			   "\nPacket errors tx: %20" PRIu64
-			   "\nPacket mbuf errors: %18" PRIu64,
-			   portid,
-			   port_statistics[portid].tx_count,
-			   port_statistics[portid].tx_size,
-			   port_statistics[portid].rx_count,
-			   port_statistics[portid].rx_size,
-			   port_statistics[portid].dropped,
-			   port_statistics[portid].httpMatch,
-			   port_statistics[portid].httpsMatch,
-			   port_statistics[portid].noMatch,
-			   port_statistics[portid].throughput,
-			   port_statistics[portid].err_rx,
-			   port_statistics[portid].err_tx,
-			   port_statistics[portid].mbuf_err);
-	}
-	printf("\n=====================================================");
+		// Clear screen and move to top left
+		printf("%s%s", clr, topLeft);
+		printf("PACKET BORKER\n");
+		printf("\nRefreshed every %d seconds. "
+			   "Send every %d minutes.\n",
+			   TIMER_PERIOD_STATS, TIMER_PERIOD_SEND);
+		printf("\nPort statistics ====================================");
 
-	fflush(stdout);
+		for (portid = 0; portid < 2; portid++)
+		{
+			printf("\nStatistics for port %u ------------------------------"
+				   "\nPackets sent count: %18" PRIu64
+				   "\nPackets sent size: %19" PRIu64
+				   "\nPackets received count: %14" PRIu64
+				   "\nPackets received size: %15" PRIu64
+				   "\nPackets dropped: %21" PRIu64
+				   "\nHTTP GET match: %22" PRIu64
+				   "\nTLS CLIENT HELLO match: %14" PRIu64
+				   "\nNo match: %28" PRIu64
+				   "\nThroughput: %26" PRId64
+				   "\nPacket errors rx: %20" PRIu64
+				   "\nPacket errors tx: %20" PRIu64
+				   "\nPacket mbuf errors: %18" PRIu64,
+				   portid,
+				   port_statistics[portid].tx_count,
+				   port_statistics[portid].tx_size,
+				   port_statistics[portid].rx_count,
+				   port_statistics[portid].rx_size,
+				   port_statistics[portid].dropped,
+				   port_statistics[portid].httpMatch,
+				   port_statistics[portid].httpsMatch,
+				   port_statistics[portid].noMatch,
+				   port_statistics[portid].throughput,
+				   port_statistics[portid].err_rx,
+				   port_statistics[portid].err_tx,
+				   port_statistics[portid].mbuf_err);
+		}
+		printf("\n=====================================================");
+
+		fflush(stdout);
+		*last_run_print = timeinfo->tm_sec;
+	}
 }
 
 /*
@@ -328,8 +338,6 @@ static void print_stats_csv(FILE *f, char *timestamp)
  */
 static void clear_stats(void)
 {
-	rte_eth_stats_reset(0);
-	rte_eth_stats_reset(1);
 	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 }
 
@@ -392,7 +400,7 @@ int load_config_file()
 			else if (strcmp(key, "STAT_FILE") == 0)
 			{
 				strcpy(STAT_FILE, value);
-		 		logMessage(__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
+				logMessage(__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
 			}
 			else if (strcmp(key, "STAT_FILE_EXT") == 0)
 			{
@@ -493,11 +501,11 @@ static int packet_checker(struct rte_mbuf **pkt)
 }
 
 /*
-* The termination signal handler
-* Handle the termination signal
-* @param signum
-* 	the signal number
-*/
+ * The termination signal handler
+ * Handle the termination signal
+ * @param signum
+ * 	the signal number
+ */
 static void
 signal_handler(int signum)
 {
@@ -509,7 +517,8 @@ signal_handler(int signum)
 }
 
 static void
-populate_json_array(json_t *jsonArray, char *timestamp){
+populate_json_array(json_t *jsonArray, char *timestamp)
+{
 	// Create object for the statistics
 	json_t *jsonObject = json_object();
 
@@ -555,9 +564,10 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 {
 	int current_sec;
 	char time_str[80];
+	char time_str_utc[80];
 	char time_str_file[80];
 	const char *format = "%Y-%m-%dT%H:%M:%S";
-	struct tm *tm_info, *tm_rounded;
+	struct tm *tm_info, *tm_rounded, *tm_info_utc;
 	time_t now, rounded;
 
 	time(&now);
@@ -601,10 +611,18 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 		// convert the time to string
 		strftime(time_str, sizeof(time_str), format, tm_info);
 
+		// convert the time to string
+		tm_info = gmtime(&now);
+		strftime(time_str_utc, sizeof(time_str_utc), format, tm_info);
+
 		// print out the stats to csv
 		print_stats_csv(*f_stat, time_str);
-		populate_json_array(jsonArray,time_str);
+
+		// flush the file
 		fflush(*f_stat);
+
+		// populate the stats to json array
+		populate_json_array(jsonArray, time_str_utc);
 
 		// clear the stats
 		clear_stats();
@@ -637,9 +655,11 @@ send_stats_to_server(json_t *jsonArray)
 {
 	CURL *curl;
 	CURLcode res;
-	struct curl_slist *headers = curl_slist_append(headers, "Content-Type: application/json");;
+	struct curl_slist *headers = curl_slist_append(headers, "Content-Type: application/json");
+	;
 	char *jsonString = json_dumps(jsonArray, 0);
 	char url[256];
+	size_t size = json_array_size(jsonArray);
 
 	sprintf(url, "%s/npb/npb-packet", HOSTNAME);
 
@@ -659,7 +679,9 @@ send_stats_to_server(json_t *jsonArray)
 		if (res != CURLE_OK)
 		{
 			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-			logMessage(__FILE__, __LINE__, "Send Stats failed: %s\n", curl_easy_strerror(res));
+			logMessage(__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
+		} else {
+			logMessage(__FILE__, __LINE__, "Send %d Stats success\n", size);
 		}
 
 		curl_slist_free_all(headers);
@@ -672,7 +694,8 @@ send_stats_to_server(json_t *jsonArray)
 }
 
 static void
-send_stats(json_t *jsonArray, int *last_run_send){
+send_stats(json_t *jsonArray, int *last_run_send)
+{
 
 	// Get the current time
 	time_t rawtime;
@@ -682,12 +705,47 @@ send_stats(json_t *jsonArray, int *last_run_send){
 	timeinfo = localtime(&rawtime);
 
 	int current_min = timeinfo->tm_min;
-	if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_send){
+	if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_send)
+	{
 		// send the statistics to the server
-		logMessage(__FILE__, __LINE__, "Sending statistics to server\n");
+		logMessage(__FILE__, __LINE__, "Start sending statistics to server\n");
 		send_stats_to_server(jsonArray);
 		*last_run_send = current_min;
 	}
+}
+
+static void
+collect_stats()
+{
+	// Get the statistics
+	rte_eth_stats_get(1, &stats_1);
+	rte_eth_stats_get(0, &stats_0);
+
+	// Update the statistics
+	port_statistics[1].rx_count = stats_1.ipackets;
+	port_statistics[1].tx_count = stats_1.opackets;
+	port_statistics[1].rx_size = stats_1.ibytes;
+	port_statistics[1].tx_size = stats_1.obytes;
+	port_statistics[1].dropped = stats_1.imissed;
+	port_statistics[1].err_rx = stats_1.ierrors;
+	port_statistics[1].err_tx = stats_1.oerrors;
+	port_statistics[1].mbuf_err = stats_1.rx_nombuf;
+	port_statistics[0].rx_count = stats_0.ipackets;
+	port_statistics[0].tx_count = stats_0.opackets;
+	port_statistics[0].rx_size = stats_0.ibytes;
+	port_statistics[0].tx_size = stats_0.obytes;
+	port_statistics[0].dropped = stats_0.imissed;
+	port_statistics[0].err_rx = stats_0.ierrors;
+	port_statistics[0].err_tx = stats_0.oerrors;
+	port_statistics[0].mbuf_err = stats_0.rx_nombuf;
+
+	// Clear the statistics
+	rte_eth_stats_reset(0);
+	rte_eth_stats_reset(1);
+
+	// Calculate the throughput
+	port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
+	port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
 }
 
 /*
@@ -707,6 +765,7 @@ lcore_stats_process(void)
 	int last_run_stat = 0;							 // lastime statistics printed
 	int last_run_file = 0;							 // lastime statistics printed to file
 	int last_run_send = 0;							 // lastime statistics sent to server
+	int last_run_print = 0;							 // lastime statistics printed to console
 	uint64_t start_tx_size_0 = 0, end_tx_size_0 = 0; // For throughput calculation
 	uint64_t start_rx_size_1 = 0, end_rx_size_1 = 0; // For throughput calculation
 	double throughput_0 = 0.0, throughput_1 = 0.0;	 // For throughput calculation
@@ -718,41 +777,18 @@ lcore_stats_process(void)
 	while (!force_quit)
 	{
 		// Get the statistics
-		rte_eth_stats_get(1, &stats_1);
-		rte_eth_stats_get(0, &stats_0);
-
-		// Update the statistics
-		port_statistics[1].rx_count = stats_1.ipackets;
-		port_statistics[1].tx_count = stats_1.opackets;
-		port_statistics[1].rx_size = stats_1.ibytes;
-		port_statistics[1].tx_size = stats_1.obytes;
-		port_statistics[1].dropped = stats_1.imissed;
-		port_statistics[1].err_rx = stats_1.ierrors;
-		port_statistics[1].err_tx = stats_1.oerrors;
-		port_statistics[1].mbuf_err = stats_1.rx_nombuf;
-		port_statistics[0].rx_count = stats_0.ipackets;
-		port_statistics[0].tx_count = stats_0.opackets;
-		port_statistics[0].rx_size = stats_0.ibytes;
-		port_statistics[0].tx_size = stats_0.obytes;
-		port_statistics[0].dropped = stats_0.imissed;
-		port_statistics[0].err_rx = stats_0.ierrors;
-		port_statistics[0].err_tx = stats_0.oerrors;
-		port_statistics[0].mbuf_err = stats_0.rx_nombuf;
-
-		// Calculate the throughput
-		port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
-		port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
+		collect_stats();
 
 		// Print the statistics
-		print_stats();
-
-		// Send stats
-		send_stats(jsonArray, &last_run_send);
+		print_stats(&last_run_print);
 
 		// Print Statistcs to file
 		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
 
-		usleep(1000000);
+		// Send stats
+		send_stats(jsonArray, &last_run_send);
+
+		usleep(10000);
 	}
 }
 
@@ -775,7 +811,7 @@ lcore_main_process(void)
 	uint16_t sent;
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
-		   rte_lcore_id()); 
+		   rte_lcore_id());
 	logMessage(__FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
 
 	// Main work of application loop
@@ -865,52 +901,52 @@ size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
 static inline void
 lcore_heartbeat_process()
 {
-    CURL *curl;
-    CURLcode res;
-    char post_fields[256];
+	CURL *curl;
+	CURLcode res;
+	char post_fields[256];
 	char url[256];
-    char timestamp_str[25];
-    time_t timestamp;
-    struct tm *tm_info;
-    struct curl_slist *headers = NULL;
+	char timestamp_str[25];
+	time_t timestamp;
+	struct tm *tm_info;
+	struct curl_slist *headers = NULL;
 
 	sprintf(url, "%s/npb/heartbeat", HOSTNAME);
 
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-    curl = curl_easy_init();
+	curl_global_init(CURL_GLOBAL_DEFAULT);
+	curl = curl_easy_init();
 
-    if (curl)
-    {
-        headers = curl_slist_append(headers, "Content-Type: application/json");
+	if (curl)
+	{
+		headers = curl_slist_append(headers, "Content-Type: application/json");
 
-        while (!force_quit)
-        {
-            timestamp = time(NULL);
-            tm_info = gmtime(&timestamp);
-            strftime(timestamp_str, 25, "%Y-%m-%dT%H:%M:%S.000Z", tm_info);
+		while (!force_quit)
+		{
+			timestamp = time(NULL);
+			tm_info = gmtime(&timestamp);
+			strftime(timestamp_str, 25, "%Y-%m-%dT%H:%M:%S.000Z", tm_info);
 
-            sprintf(post_fields, "[{\"npb_id\": %d, \"time\": \"%s\"}]", NPB_ID, timestamp_str);
+			sprintf(post_fields, "[{\"npb_id\": %d, \"time\": \"%s\"}]", NPB_ID, timestamp_str);
 
-            curl_easy_setopt(curl, CURLOPT_URL, url);
-            curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
-            curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+			curl_easy_setopt(curl, CURLOPT_URL, url);
+			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
+			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-            curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
+			curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, write_callback);
 
-            res = curl_easy_perform(curl);
+			res = curl_easy_perform(curl);
 
-            if (res != CURLE_OK)
-            {
-                logMessage(__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
-            }
-            sleep(5);
-        }
+			if (res != CURLE_OK)
+			{
+				logMessage(__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
+			}
+			sleep(5);
+		}
 
-        curl_slist_free_all(headers);
-        curl_easy_cleanup(curl);
-    }	
+		curl_slist_free_all(headers);
+		curl_easy_cleanup(curl);
+	}
 
-    curl_global_cleanup();
+	curl_global_cleanup();
 }
 
 /*

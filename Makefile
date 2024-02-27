@@ -3,11 +3,9 @@
 
 # binary name
 APP = packetBroker
-APP2 = aggregator
 
 # all source are stored in SRCS-pb
 SRCS-pb := packetBroker.c
-SRCS-ag := aggregator.c
 
 PKGCONF ?= pkg-config
 
@@ -16,13 +14,12 @@ ifneq ($(shell $(PKGCONF) --exists libdpdk && echo 0),0)
 $(error "no installation of DPDK found")
 endif
 
-all: shared aggregator stats logs
-.PHONY: shared static aggregator logs
+all: shared stats logs
+.PHONY: shared static logs
 shared: build/$(APP)-shared
 	ln -sf $(APP)-shared build/$(APP)
 static: build/$(APP)-static
 	ln -sf $(APP)-static build/$(APP)
-aggregator: build/$(APP2)
 stats:
 	@mkdir -p $@
 logs:
@@ -50,13 +47,10 @@ build/$(APP)-shared: $(SRCS-pb) Makefile $(PC_FILE) | build
 build/$(APP)-static: $(SRCS-pb) Makefile $(PC_FILE) | build
 	$(CC) $(CFLAGS) $(SRCS-pb) -o $@ $(LDFLAGS) $(LDFLAGS_STATIC) $(LDFLAGS_NETWORK)
 
-build/$(APP2): build
-	$(CC) $(SRCS-ag) -o $@ $(LDFLAGS_NETWORK)
-
 build:
 	@mkdir -p $@
 
 .PHONY: clean
 clean:
-	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared build/$(APP2)
+	rm -f build/$(APP) build/$(APP)-static build/$(APP)-shared
 	test -d build && rmdir -p build && rm -rf stats && rm -rf logs || true
