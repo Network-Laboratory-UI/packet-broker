@@ -43,8 +43,6 @@ uint32_t MAX_TCP_PAYLOAD_LEN;
 uint32_t NPB_ID;
 
 // Define the statistics file name
-// #define STAT_FILE "stats/stats"
-// #define STAT_FILE_EXT ".csv"
 char STAT_FILE[100];
 char STAT_FILE_EXT[100];
 char HOSTNAME[100];
@@ -70,8 +68,6 @@ static volatile bool force_quit;
 // Timer period for statistics
 static uint32_t TIMER_PERIOD_STATS; // 1 second
 static uint32_t TIMER_PERIOD_SEND;	// 10 minutes
-
-// TDOO: Create struct for packet broker identifier
 
 // Port statistic struct
 struct port_statistics_data
@@ -122,7 +118,6 @@ void logMessage(const char *filename, int line, const char *format, ...)
 	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
 
 	// Write the timestamp to the file
-	// fprintf(file, "[%s] ", timestamp);
 	fprintf(file, "[%s] [%s:%d] - ", timestamp, filename, line);
 
 	// Write the formatted message to the file
@@ -196,6 +191,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 
 	txconf = dev_info.default_txconf;
 	txconf.offloads = port_conf.txmode.offloads;
+
 	// Allocate 1 Tx queue for each port
 	for (q = 0; q < tx_rings; q++)
 	{
@@ -511,6 +507,7 @@ signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM)
 	{
+		printf("\nSignal %d received, preparing to exit...\n", signum);
 		logMessage(__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
 	}
@@ -605,7 +602,7 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			*last_run_file = tm_rounded->tm_min;
 
 			// Set the time to now
-			tm_info = localtime(&now); // TODO: not efficient because already called before
+			tm_info = localtime(&now);
 		}
 
 		// convert the time to string
@@ -820,7 +817,7 @@ lcore_main_process(void)
 
 		// Get burst of RX packets, from first port of pair
 		struct rte_mbuf *bufs[BURST_SIZE];
-		// TODO: get the portId from options
+		
 		const uint16_t nb_rx = rte_eth_rx_burst(1, 0,
 												bufs, BURST_SIZE);
 
