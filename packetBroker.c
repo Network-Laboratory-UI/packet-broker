@@ -318,7 +318,7 @@ print_stats(int *last_run_print)
  */
 static void print_stats_csv_header(FILE *f)
 {
-	fprintf(f, "npb_id,http_count,https_count,no_match,rx_0_count,tx_0_count,rx_0_size,tx_0_size,rx_0_drop,rx_0_error,tx_0_error,rx_0_mbuf,rx_1_count,tx_1_count,rx_1_size,tx_1_size,rx_1_drop,rx_1_error,tx_1_error,rx_1_mbuf,time,throughput\n"); // Header row
+	fprintf(f, "npb_id,http_count,https_count,no_match,rx_0_count,tx_0_count,rx_0_size,tx_0_size,rx_0_drop,rx_0_error,tx_0_error,rx_0_mbuf,rx_1_count,tx_1_count,rx_1_size,tx_1_size,rx_1_drop,rx_1_error,tx_1_error,rx_1_mbuf,time,throughput,service_time\n"); // Header row
 }
 
 /*
@@ -330,7 +330,7 @@ static void print_stats_csv_header(FILE *f)
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput);
+	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld,%f\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput, avg_service_time);
 }
 
 /*
@@ -651,6 +651,15 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 		tm_info = gmtime(&now);
 		strftime(time_str_utc, sizeof(time_str_utc), format, tm_info);
 
+		// get avg service time
+		if (count_service_time > 0)
+		{
+			avg_service_time = service_time / count_service_time;
+			service_time = 0;
+			count_service_time = 0;
+			logMessage(__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
+		}
+
 		// print out the stats to csv
 		print_stats_csv(*f_stat, time_str);
 
@@ -659,14 +668,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 
 		// populate the stats to json array
 		populate_json_array(jsonArray, time_str_utc);
-
-		// get avg service time
-		if (count_service_time > 0)
-		{
-			avg_service_time = service_time / count_service_time;
-		}
-
-		logMessage(__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
 
 		// clear the stats
 		clear_stats();
