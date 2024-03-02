@@ -40,7 +40,7 @@ uint32_t NUM_MBUFS;
 uint32_t MBUF_CACHE_SIZE;
 uint32_t BURST_SIZE;
 uint32_t MAX_TCP_PAYLOAD_LEN;
-uint32_t NPB_ID;
+char NPB_ID[200];
 
 // Define the statistics file name
 char STAT_FILE[100];
@@ -133,6 +133,15 @@ void logMessage(const char *filename, int line, const char *format, ...)
 
 	// Close the file
 	fclose(file);
+}
+
+/*
+ * The clear statistics function
+ * Clear the statistics
+ */
+static void clear_stats(void)
+{
+	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 }
 
 /*
@@ -306,6 +315,9 @@ print_stats(int *last_run_print)
 		printf("\n=====================================================");
 
 		fflush(stdout);
+
+		// clear the stats
+		clear_stats();
 		*last_run_print = timeinfo->tm_sec;
 	}
 }
@@ -330,16 +342,7 @@ static void print_stats_csv_header(FILE *f)
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%d,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld,%f\n", 1, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput, avg_service_time);
-}
-
-/*
- * The clear statistics function
- * Clear the statistics
- */
-static void clear_stats(void)
-{
-	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
+	fprintf(f, "%s,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld,%f\n", NPB_ID, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput, avg_service_time);
 }
 
 /*
@@ -418,10 +421,10 @@ int load_config_file()
 				TIMER_PERIOD_SEND = atoi(value);
 				logMessage(__FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
 			}
-			else if (strcmp(key, "ID") == 0)
+			else if (strcmp(key, "ID_NPB") == 0)
 			{
-				NPB_ID = atoi(value);
-				logMessage(__FILE__, __LINE__, "NPB ID: %d\n", NPB_ID);
+				strcpy(NPB_ID, value);
+				logMessage(__FILE__, __LINE__, "NPB ID: %s\n", NPB_ID);
 			}
 			else if (strcmp(key, "HOSTNAME") == 0)
 			{
@@ -525,7 +528,7 @@ populate_json_array(json_t *jsonArray, char *timestamp)
 	json_t *jsonObject = json_object();
 
 	// Populate the JSON object
-	json_object_set(jsonObject, "npb_id", json_integer(NPB_ID));
+	json_object_set(jsonObject, "npb_id", json_string(NPB_ID));
 	json_object_set(jsonObject, "http_count", json_integer(port_statistics[0].httpMatch));
 	json_object_set(jsonObject, "https_count", json_integer(port_statistics[0].httpsMatch));
 	json_object_set(jsonObject, "no_match", json_integer(port_statistics[0].noMatch));
@@ -644,6 +647,9 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			tm_info = localtime(&now);
 		}
 
+		// Collcet stats
+		collect_stats();
+
 		// convert the time to string
 		strftime(time_str, sizeof(time_str), format, tm_info);
 
@@ -668,9 +674,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 
 		// populate the stats to json array
 		populate_json_array(jsonArray, time_str_utc);
-
-		// clear the stats
-		clear_stats();
 
 		if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_file)
 		{
@@ -787,14 +790,11 @@ lcore_stats_process(void)
 
 	while (!force_quit)
 	{
-		// Get the statistics
-		collect_stats();
+		// Print Statistcs to file
+		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
 
 		// Print the statistics
 		print_stats(&last_run_print);
-
-		// Print Statistcs to file
-		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
 
 		// Send stats
 		send_stats(jsonArray, &last_run_send);
@@ -951,7 +951,10 @@ lcore_heartbeat_process()
 			tm_info = gmtime(&timestamp);
 			strftime(timestamp_str, 25, "%Y-%m-%dT%H:%M:%S.000Z", tm_info);
 
-			sprintf(post_fields, "[{\"npb_id\": %d, \"time\": \"%s\"}]", NPB_ID, timestamp_str);
+			sprintf(post_fields, "[{\"npb_id\": \"%s\", \"time\": \"%s\"}]", NPB_ID, timestamp_str);
+
+			logMessage(__FILE__, __LINE__, "time : %s\n", timestamp_str);
+			logMessage(__FILE__, __LINE__, "Post Fields : %s\n", post_fields);
 
 			curl_easy_setopt(curl, CURLOPT_URL, url);
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
