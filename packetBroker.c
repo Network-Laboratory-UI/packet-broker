@@ -89,6 +89,11 @@ struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
 struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
 
+// Service Time
+clock_t start, end;
+double service_time = 0, avg_service_time = 0;
+int count_service_time = 0;
+
 /*
  * The log message function
  * Log the message to the log file
@@ -547,6 +552,40 @@ populate_json_array(json_t *jsonArray, char *timestamp)
 	json_array_append(jsonArray, jsonObject);
 }
 
+static void
+collect_stats()
+{
+	// Get the statistics
+	rte_eth_stats_get(1, &stats_1);
+	rte_eth_stats_get(0, &stats_0);
+
+	// Update the statistics
+	port_statistics[1].rx_count = stats_1.ipackets;
+	port_statistics[1].tx_count = stats_1.opackets;
+	port_statistics[1].rx_size = stats_1.ibytes;
+	port_statistics[1].tx_size = stats_1.obytes;
+	port_statistics[1].dropped = stats_1.imissed;
+	port_statistics[1].err_rx = stats_1.ierrors;
+	port_statistics[1].err_tx = stats_1.oerrors;
+	port_statistics[1].mbuf_err = stats_1.rx_nombuf;
+	port_statistics[0].rx_count = stats_0.ipackets;
+	port_statistics[0].tx_count = stats_0.opackets;
+	port_statistics[0].rx_size = stats_0.ibytes;
+	port_statistics[0].tx_size = stats_0.obytes;
+	port_statistics[0].dropped = stats_0.imissed;
+	port_statistics[0].err_rx = stats_0.ierrors;
+	port_statistics[0].err_tx = stats_0.oerrors;
+	port_statistics[0].mbuf_err = stats_0.rx_nombuf;
+
+	// Clear the statistics
+	rte_eth_stats_reset(0);
+	rte_eth_stats_reset(1);
+
+	// Calculate the throughput
+	port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
+	port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
+}
+
 /*
  * The print statistics file function
  * Print the statistics to the file
@@ -620,6 +659,14 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 
 		// populate the stats to json array
 		populate_json_array(jsonArray, time_str_utc);
+
+		// get avg service time
+		if (count_service_time > 0)
+		{
+			avg_service_time = service_time / count_service_time;
+		}
+
+		logMessage(__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
 
 		// clear the stats
 		clear_stats();
@@ -711,40 +758,6 @@ send_stats(json_t *jsonArray, int *last_run_send)
 	}
 }
 
-static void
-collect_stats()
-{
-	// Get the statistics
-	rte_eth_stats_get(1, &stats_1);
-	rte_eth_stats_get(0, &stats_0);
-
-	// Update the statistics
-	port_statistics[1].rx_count = stats_1.ipackets;
-	port_statistics[1].tx_count = stats_1.opackets;
-	port_statistics[1].rx_size = stats_1.ibytes;
-	port_statistics[1].tx_size = stats_1.obytes;
-	port_statistics[1].dropped = stats_1.imissed;
-	port_statistics[1].err_rx = stats_1.ierrors;
-	port_statistics[1].err_tx = stats_1.oerrors;
-	port_statistics[1].mbuf_err = stats_1.rx_nombuf;
-	port_statistics[0].rx_count = stats_0.ipackets;
-	port_statistics[0].tx_count = stats_0.opackets;
-	port_statistics[0].rx_size = stats_0.ibytes;
-	port_statistics[0].tx_size = stats_0.obytes;
-	port_statistics[0].dropped = stats_0.imissed;
-	port_statistics[0].err_rx = stats_0.ierrors;
-	port_statistics[0].err_tx = stats_0.oerrors;
-	port_statistics[0].mbuf_err = stats_0.rx_nombuf;
-
-	// Clear the statistics
-	rte_eth_stats_reset(0);
-	rte_eth_stats_reset(1);
-
-	// Calculate the throughput
-	port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
-	port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
-}
-
 /*
  * The lcore stast process
  * Running all the stats process including
@@ -814,6 +827,8 @@ lcore_main_process(void)
 	// Main work of application loop
 	while (!force_quit)
 	{
+		// get time for start service time
+		start = clock();
 
 		// Get burst of RX packets, from first port of pair
 		struct rte_mbuf *bufs[BURST_SIZE];
@@ -842,6 +857,9 @@ lcore_main_process(void)
 				if (sent)
 				{
 					port_statistics[0].httpMatch += sent;
+					
+					// get end time to count service time
+					end = clock();
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -853,6 +871,9 @@ lcore_main_process(void)
 				if (sent)
 				{
 					port_statistics[0].httpsMatch += sent;
+					
+					// get end time to count service time
+					end = clock();
 				}
 			}
 			else
@@ -862,11 +883,18 @@ lcore_main_process(void)
 
 				// free up the buffer
 				rte_pktmbuf_free(bufs[i]);
+
+				// get end time to count service time
+				end = clock();
 			}
 		}
 
 		// free up the buffer
 		rte_pktmbuf_free(*bufs);
+
+		// get the service time
+		service_time += (double)(end - start) / CLOCKS_PER_SEC;
+		count_service_time += 1;
 	}
 }
 
