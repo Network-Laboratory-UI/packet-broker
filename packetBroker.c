@@ -953,9 +953,6 @@ lcore_heartbeat_process()
 
 			sprintf(post_fields, "[{\"npb_id\": \"%s\", \"time\": \"%s\"}]", NPB_ID, timestamp_str);
 
-			logMessage(__FILE__, __LINE__, "time : %s\n", timestamp_str);
-			logMessage(__FILE__, __LINE__, "Post Fields : %s\n", post_fields);
-
 			curl_easy_setopt(curl, CURLOPT_URL, url);
 			curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post_fields);
 			curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
