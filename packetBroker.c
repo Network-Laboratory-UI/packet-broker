@@ -80,6 +80,7 @@ hs_database_t *database;
 hs_compile_error_t *compile_err;
 hs_scratch_t *scratch = NULL;
 char *pattern = "GET /";
+char *pattern2 = "\x16\x03\x01.{2}\x01";
 
 static int eventHandler(unsigned int id, unsigned long long from,
                         unsigned long long to, unsigned int flags, void *ctx) {
@@ -389,68 +390,18 @@ int load_config_file()
 */
 static int packet_checker(struct rte_mbuf **pkt)
 {
-	char* packet_data = rte_pktmbuf_mtod(*pkt, char*);
-	if (hs_scan(database, packet_data, sizeof(packet_data), 0, scratch, eventHandler,
-                pattern) != HS_SUCCESS) {
+// 	char* packet_data = rte_pktmbuf_mtod(*pkt, char*);
+	char *payload = rte_pktmbuf_mtod(*pkt, char *);
+    uint16_t payload_len = rte_pktmbuf_pkt_len(*pkt);
+	unsigned int id;
+
+	if (hs_scan(database, payload, payload_len, 0, scratch, eventHandler,
+                &id) != HS_SUCCESS) {
         fprintf(stderr, "ERROR: Unable to scan input buffer. Exiting.\n");
         hs_free_scratch(scratch);
         hs_free_database(database);
         return -1;
     }
-	// // Define Variable
-	// int sent;
-
-	// // Parse Ethernet header
-	// struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
-
-	// // Check if it's an IP packet
-	// if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4))
-	// {
-	// 	// Parse IP header
-	// 	struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
-
-	// 	// Check if it's a TCP packet
-	// 	if (ip_hdr->next_proto_id == IPPROTO_TCP)
-	// 	{
-	// 		// Parse TCP header
-	// 		struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
-
-	// 		// Calculate TCP payload length
-	// 		uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
-
-	// 		// Point to the TCP payload data
-	// 		char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
-
-	// 		// Convert the TCP payload to a string (char array)
-	// 		char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-	// 		// Copy the TCP payload into the string
-	// 		// Limit the copy to avoid buffer overflow
-	// 		snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
-
-	// 		if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
-	// 		{
-	// 			return HTTP_GET;
-	// 		}
-
-	// 		// Check if the payload contains a TLS handshake message
-	// 		if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
-	// 		{
-	// 			if (tcp_payload[5] == 1)
-	// 			{
-	// 				return TLS_CLIENT_HELLO;
-	// 			}
-	// 		}
-
-	// 		// return if there is no payload
-	// 		return 0;
-	// 	}
-
-	// 	// return if there is no TCP packet
-	// 	return 0;
-	// }
-
-	// // return if there is no IP packet
-	// return 0;
 }
 // END OF PACKET PROCESSING AND CHECKING
 
@@ -673,6 +624,8 @@ lcore_main_process(void)
 			// check the packet type
 			packet_type = packet_checker(&bufs[i]);
 
+			// Print packet type
+
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
 			{
@@ -683,6 +636,7 @@ lcore_main_process(void)
 				if (sent)
 				{
 					port_statistics[0].httpMatch += sent;
+					// printf("BASIC: HTTP GET\n");
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -694,12 +648,16 @@ lcore_main_process(void)
 				if (sent)
 				{
 					port_statistics[0].httpsMatch += sent;
+					// printf("BASIC: TLS CLIENT HELLO\n");
 				}
 			}
 			else
 			{
 				// no match
 				port_statistics[0].noMatch += 1;
+
+				// print no match
+				// printf("BASIC: NO MATCH\n");
 
 				// free up the buffer
 				rte_pktmbuf_free(bufs[i]);
@@ -777,13 +735,38 @@ int main(int argc, char *argv[])
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 2\n");
 
 	// Initialize database
-	if (hs_compile(pattern, HS_FLAG_SINGLEMATCH, HS_MODE_BLOCK, NULL, &database,
-                   &compile_err) != HS_SUCCESS) {
-        fprintf(stderr, "ERROR: Unable to compile pattern \"%s\": %s\n",
-                pattern, compile_err->message);
-        hs_free_compile_error(compile_err);
-        rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
-    }
+	// if (hs_compile(pattern, HS_FLAG_SINGLEMATCH, HS_MODE_BLOCK, NULL, &database,
+    //                &compile_err) != HS_SUCCESS) {
+    //     fprintf(stderr, "ERROR: Unable to compile pattern \"%s\": %s\n",
+    //             pattern, compile_err->message);
+    //     hs_free_compile_error(compile_err);
+    //     rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+    // }
+
+	// if (hs_compile(pattern2, HS_FLAG_SINGLEMATCH, HS_MODE_BLOCK, NULL, &database,
+    //                &compile_err) != HS_SUCCESS) {
+    //     fprintf(stderr, "ERROR: Unable to compile pattern \"%s\": %s\n",
+    //             pattern, compile_err->message);
+    //     hs_free_compile_error(compile_err);
+    //     rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+    // }
+
+	// Define patterns
+    const char *patterns[] = {"pattern1", "pattern2"}; // Add your patterns
+	const int ids[2] = {0, 1};
+	const unsigned int *flag = HS_FLAG_SINGLEMATCH;
+    // Compile patterns into Hyperscan database
+    hs_compile_error_t *compile_err;
+    if(hs_compile_multi(patterns, flag, NULL, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
+	{
+		fprintf(stderr, "ERROR: Unable to compile pattern : %s\n", compile_err->message);
+		hs_free_compile_error(compile_err);
+		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+	
+	}
+
+
+	printf("Database compiled successfully\n");
 
 	// initialize scratch to store buffer
 	if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS) {
@@ -791,6 +774,8 @@ int main(int argc, char *argv[])
         hs_free_database(database);
         rte_exit(EXIT_FAILURE, "Cannot allocate scratch space\n");
     }
+
+	printf("Scratch space allocated successfully\n");
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
@@ -818,9 +803,9 @@ int main(int argc, char *argv[])
 	rte_eal_remote_launch((lcore_function_t *)lcore_main_process,
 						  NULL, lcore_main);
 
-	// run the stats
-	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
-						  NULL, lcore_stats);
+	// // run the stats
+	// rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
+	// 					  NULL, lcore_stats);
 
 	// wait all lcore stopped
 	RTE_LCORE_FOREACH_WORKER(lcore_id)

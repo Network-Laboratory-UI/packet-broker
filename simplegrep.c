@@ -59,7 +59,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include <hs.h>
+#include <hs/hs.h>
 
 /**
  * This is the function that will be called for each match that occurs. @a ctx
