@@ -88,6 +88,8 @@ struct port_statistics_data
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
 struct rte_eth_stats stats_0;
 struct rte_eth_stats stats_1;
+uint64_t httpMatch = 0;
+uint64_t httpsMatch = 0;
 
 // Service Time
 clock_t start, end;
@@ -579,10 +581,14 @@ collect_stats()
 	port_statistics[0].err_rx = stats_0.ierrors;
 	port_statistics[0].err_tx = stats_0.oerrors;
 	port_statistics[0].mbuf_err = stats_0.rx_nombuf;
+	port_statistics[0].httpMatch = httpMatch;
+	port_statistics[0].httpsMatch = httpsMatch;
 
 	// Clear the statistics
 	rte_eth_stats_reset(0);
 	rte_eth_stats_reset(1);
+	httpMatch = 0;
+	httpsMatch = 0;
 
 	// Calculate the throughput
 	port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
@@ -857,7 +863,7 @@ lcore_main_process(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].httpMatch += sent;
+					httpMatch += sent;
 					
 					// get end time to count service time
 					end = clock();
@@ -871,7 +877,7 @@ lcore_main_process(void)
 				// update the statistics
 				if (sent)
 				{
-					port_statistics[0].httpsMatch += sent;
+					httpsMatch += sent;
 					
 					// get end time to count service time
 					end = clock();
