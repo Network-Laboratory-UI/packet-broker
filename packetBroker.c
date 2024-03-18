@@ -106,35 +106,50 @@ int count_service_time = 0;
  * @param format
  * 	the format of the message
  */
-void logMessage(const char *filename, int line, const char *format, ...)
+typedef enum {
+    LOG_LEVEL_INFO,
+    LOG_LEVEL_WARNING,
+    LOG_LEVEL_ERROR
+} LogLevel;
+
+const char* getLogLevelString(LogLevel level) {
+    switch(level) {
+        case LOG_LEVEL_INFO: return "INFO";
+        case LOG_LEVEL_WARNING: return "WARNING";
+        case LOG_LEVEL_ERROR: return "ERROR";
+        default: return "UNKNOWN";
+    }
+}
+
+void logMessage(LogLevel level, const char *filename, int line, const char *format, ...)
 {
-	// Open the log file in append mode
-	FILE *file = fopen("logs/log.txt", "a");
-	if (file == NULL)
-	{
-		logMessage(__FILE__, __LINE__, "Error opening file %s\n", filename);
-		return;
-	}
+    // Open the log file in append mode
+    FILE *file = fopen("logs/log.txt", "a");
+    if (file == NULL)
+    {
+        logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error opening file %s\n", filename);
+        return;
+    }
 
-	// Get the current time
-	time_t rawtime;
-	struct tm *timeinfo;
-	char timestamp[20];
-	time(&rawtime);
-	timeinfo = localtime(&rawtime);
-	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+    // Get the current time
+    time_t rawtime;
+    struct tm *timeinfo;
+    char timestamp[20];
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
 
-	// Write the timestamp to the file
-	fprintf(file, "[%s] [%s:%d] - ", timestamp, filename, line);
+    // Write the timestamp and log level to the file
+    fprintf(file, "[%s] [%s] [%s:%d] - ", timestamp, getLogLevelString(level), filename, line);
 
-	// Write the formatted message to the file
-	va_list args;
-	va_start(args, format);
-	vfprintf(file, format, args);
-	va_end(args);
+    // Write the formatted message to the file
+    va_list args;
+    va_start(args, format);
+    vfprintf(file, format, args);
+    va_end(args);
 
-	// Close the file
-	fclose(file);
+    // Close the file
+    fclose(file);
 }
 
 /*
@@ -178,7 +193,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	retval = rte_eth_dev_info_get(port, &dev_info);
 	if (retval != 0)
 	{
-		logMessage(__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
 				   port, strerror(-retval));
 		return retval;
 	}
@@ -228,7 +243,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	if (retval != 0)
 		return retval;
 
-	logMessage(__FILE__, __LINE__, "Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Port %u MAC: %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 " %02" PRIx8 "\n",
 			   port, RTE_ETHER_ADDR_BYTES(&addr));
 
 	// SET THE PORT TO PROMOCIOUS
@@ -247,11 +262,11 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
  */
 static FILE *open_file(const char *filename)
 {
-	logMessage(__FILE__, __LINE__, "Opening file %s\n", filename);
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Opening file %s\n", filename);
 	FILE *f = fopen(filename, "a+");
 	if (f == NULL)
 	{
-		logMessage(__FILE__, __LINE__, "Error opening file %s\n", filename);
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error opening file %s\n", filename);
 		rte_exit(EXIT_FAILURE, "Error opening file %s\n", filename);
 	}
 	return f;
@@ -356,7 +371,7 @@ int load_config_file()
 	FILE *configFile = fopen("config/config.cfg", "r");
 	if (configFile == NULL)
 	{
-		logMessage(__FILE__, __LINE__, "Cannot open the config file\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot open the config file\n");
 		return 1;
 	}
 
@@ -371,67 +386,67 @@ int load_config_file()
 			if (strcmp(key, "MAX_PACKET_LEN") == 0)
 			{
 				MAX_PACKET_LEN = atoi(value);
-				logMessage(__FILE__, __LINE__, "MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
 			}
 			else if (strcmp(key, "RX_RING_SIZE") == 0)
 			{
 				RX_RING_SIZE = atoi(value);
-				logMessage(__FILE__, __LINE__, "RX_RING_SIZE: %d\n", RX_RING_SIZE);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "RX_RING_SIZE: %d\n", RX_RING_SIZE);
 			}
 			else if (strcmp(key, "TX_RING_SIZE") == 0)
 			{
 				TX_RING_SIZE = atoi(value);
-				logMessage(__FILE__, __LINE__, "TX_RING_SIZE: %d\n", TX_RING_SIZE);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TX_RING_SIZE: %d\n", TX_RING_SIZE);
 			}
 			else if (strcmp(key, "NUM_MBUFS") == 0)
 			{
 				NUM_MBUFS = atoi(value);
-				logMessage(__FILE__, __LINE__, "NUM_MBUFS: %d\n", NUM_MBUFS);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "NUM_MBUFS: %d\n", NUM_MBUFS);
 			}
 			else if (strcmp(key, "MBUF_CACHE_SIZE") == 0)
 			{
 				MBUF_CACHE_SIZE = atoi(value);
-				logMessage(__FILE__, __LINE__, "MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
 			}
 			else if (strcmp(key, "BURST_SIZE") == 0)
 			{
 				BURST_SIZE = atoi(value);
-				logMessage(__FILE__, __LINE__, "BURST_SIZE: %d\n", BURST_SIZE);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "BURST_SIZE: %d\n", BURST_SIZE);
 			}
 			else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0)
 			{
 				MAX_TCP_PAYLOAD_LEN = atoi(value);
-				logMessage(__FILE__, __LINE__, "MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
 			}
 			else if (strcmp(key, "STAT_FILE") == 0)
 			{
 				strcpy(STAT_FILE, value);
-				logMessage(__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
 			}
 			else if (strcmp(key, "STAT_FILE_EXT") == 0)
 			{
 				strcpy(STAT_FILE_EXT, value);
-				logMessage(__FILE__, __LINE__, "STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_STATS") == 0)
 			{
 				TIMER_PERIOD_STATS = atoi(value);
-				logMessage(__FILE__, __LINE__, "TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_SEND") == 0)
 			{
 				TIMER_PERIOD_SEND = atoi(value);
-				logMessage(__FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
 			}
 			else if (strcmp(key, "ID_NPB") == 0)
 			{
 				strcpy(NPB_ID, value);
-				logMessage(__FILE__, __LINE__, "NPB ID: %s\n", NPB_ID);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "NPB ID: %s\n", NPB_ID);
 			}
 			else if (strcmp(key, "HOSTNAME") == 0)
 			{
 				strcpy(HOSTNAME, value);
-				logMessage(__FILE__, __LINE__, "HOSTNAME: %s\n", HOSTNAME);
+				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "HOSTNAME: %s\n", HOSTNAME);
 			}
 		}
 	}
@@ -518,7 +533,7 @@ signal_handler(int signum)
 	if (signum == SIGINT || signum == SIGTERM)
 	{
 		printf("\nSignal %d received, preparing to exit...\n", signum);
-		logMessage(__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
+		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
 	}
 }
@@ -669,7 +684,7 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			avg_service_time = service_time / count_service_time;
 			service_time = 0;
 			count_service_time = 0;
-			logMessage(__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
+			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
 		}
 
 		// print out the stats to csv
@@ -733,9 +748,12 @@ send_stats_to_server(json_t *jsonArray)
 		if (res != CURLE_OK)
 		{
 			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
-			logMessage(__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
+			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
 		} else {
-			logMessage(__FILE__, __LINE__, "Send %d Stats success\n", size);
+			if (size < (60 * TIMER_PERIOD_SEND)){
+				logMessage(LOG_LEVEL_WARNING,__FILE__, __LINE__, "Stats data is not normal\n");
+			}
+			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Send %d Stats success\n", size);
 		}
 
 		curl_slist_free_all(headers);
@@ -762,7 +780,7 @@ send_stats(json_t *jsonArray, int *last_run_send)
 	if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_send)
 	{
 		// send the statistics to the server
-		logMessage(__FILE__, __LINE__, "Start sending statistics to server\n");
+		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Start sending statistics to server\n");
 		send_stats_to_server(jsonArray);
 		*last_run_send = current_min;
 	}
@@ -792,7 +810,7 @@ lcore_stats_process(void)
 	FILE *f_stat = NULL;							 // File pointer for statistics
 	json_t *jsonArray = json_array();				 // JSON array for statistics
 
-	logMessage(__FILE__, __LINE__, "Starting stats process in %d\n", rte_lcore_id());
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting stats process in %d\n", rte_lcore_id());
 
 	while (!force_quit)
 	{
@@ -829,7 +847,7 @@ lcore_main_process(void)
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
-	logMessage(__FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
 
 	// Main work of application loop
 	while (!force_quit)
@@ -920,7 +938,7 @@ lcore_main_process(void)
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t real_size = size * nmemb;
-	logMessage(__FILE__, __LINE__, "Heartbeat Response: %.*s \n", (int)real_size, (char *)contents);
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Heartbeat Response: %.*s \n", (int)real_size, (char *)contents);
 	return real_size;
 }
 
@@ -969,7 +987,7 @@ lcore_heartbeat_process()
 
 			if (res != CURLE_OK)
 			{
-				logMessage(__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
+				logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
 			}
 			sleep(5);
 		}
@@ -1002,21 +1020,21 @@ int main(int argc, char *argv[])
 	unsigned lcore_id, lcore_main = 0, lcore_stats = 0;
 
 	// log the starting of the application
-	logMessage(__FILE__, __LINE__, "Starting the application\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting the application\n");
 
 	// load the config file
 	if (load_config_file())
 	{
-		logMessage(__FILE__, __LINE__, "Cannot load the config file\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot load the config file\n");
 		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
 	}
-	logMessage(__FILE__, __LINE__, "Load config done\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Load config done\n");
 
 	// Initializion the Environment Abstraction Layer (EAL)
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 	{
-		logMessage(__FILE__, __LINE__, "Error with EAL initialization\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error with EAL initialization\n");
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
 	}
 
@@ -1030,13 +1048,13 @@ int main(int argc, char *argv[])
 
 	// clean the data
 	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
-	logMessage(__FILE__, __LINE__, "Clean the statistics data\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Clean the statistics data\n");
 
 	// count the number of ports to send and receive
 	nb_ports = rte_eth_dev_count_avail();
 	if (nb_ports < 2 || (nb_ports & 1))
 	{
-		logMessage(__FILE__, __LINE__, "Error: number of ports must be even\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error: number of ports must be even\n");
 		rte_exit(EXIT_FAILURE, "Error: number of ports must be even\n");
 	}
 
@@ -1047,23 +1065,23 @@ int main(int argc, char *argv[])
 	// check the mempool allocation
 	if (mbuf_pool == NULL)
 	{
-		logMessage(__FILE__, __LINE__, "Cannot create mbuf pool\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot create mbuf pool\n");
 		rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
 	}
-	logMessage(__FILE__, __LINE__, "Create mbuf pool done\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Create mbuf pool done\n");
 
 	// initializing ports
 	RTE_ETH_FOREACH_DEV(portid)
 	if (port_init(portid, mbuf_pool) != 0)
 	{
-		logMessage(__FILE__, __LINE__, "Cannot init port %" PRIu16 "\n", portid);
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot init port %" PRIu16 "\n", portid);
 		rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", portid);
 	}
 
 	// count the number of lcore
 	if (rte_lcore_count() < 3)
 	{
-		logMessage(__FILE__, __LINE__, "lcore must be more than equal 3\n");
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "lcore must be more than equal 3\n");
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
 	}
 
@@ -1077,29 +1095,29 @@ int main(int argc, char *argv[])
 		if (lcore_main == 0)
 		{
 			lcore_main = lcore_id;
-			logMessage(__FILE__, __LINE__, "Main on core %u\n", lcore_id);
+			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Main on core %u\n", lcore_id);
 			continue;
 		}
 		if (lcore_stats == 0)
 		{
 			lcore_stats = lcore_id;
-			logMessage(__FILE__, __LINE__, "Stats on core %u\n", lcore_id);
+			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Stats on core %u\n", lcore_id);
 			continue;
 		}
 	}
 
 	// run the lcore main function
-	logMessage(__FILE__, __LINE__, "Run the lcore main function\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the lcore main function\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_main_process,
 						  NULL, lcore_main);
 
 	// run the stats
-	logMessage(__FILE__, __LINE__, "Run the stats\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the stats\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
 						  NULL, lcore_stats);
 
 	// run the heartbeat
-	logMessage(__FILE__, __LINE__, "Run the heartbeat\n");
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the heartbeat\n");
 	lcore_heartbeat_process();
 
 	// wait all lcore stopped
