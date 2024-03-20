@@ -81,12 +81,8 @@ hs_compile_error_t *compile_err;
 hs_scratch_t *scratch = NULL;
 char *pattern = "GET /";
 char *pattern2 = "\x16\x03\x01.{2}\x01";
-
-static int eventHandler(unsigned int id, unsigned long long from,
-                        unsigned long long to, unsigned int flags, void *ctx) {
-    printf("Match for pattern \"%s\" at offset %llu\n", (char *)ctx, to);
-    return 0;
-}
+const char *patterns[] = {"GET /", "\x16\x03\x01.{2}\x01"}; // Add your patterns
+const int ids[2] = {0, 1};
 
 // Port statistic struct
 struct port_statistics_data
@@ -380,6 +376,20 @@ int load_config_file()
 	return 0;
 }
 
+typedef struct {
+    unsigned int id;
+} MatchContext;
+
+static int eventHandler(unsigned int id, unsigned long long from,
+                        unsigned long long to, unsigned int flags, void *ctx) {
+	// printf("id: %d, from: %llu, to: %llu\n", id, from, to);
+    // printf("Match for pattern \"%s\" at offset %llu\n", patterns[id], to);
+	MatchContext *matchCtx = (MatchContext *)ctx;
+	matchCtx->id = id+1;
+	// free(matchCtx);
+    return 0;
+}
+
 /*
 * The packet checker function
 * Check the packet type
@@ -395,13 +405,38 @@ static int packet_checker(struct rte_mbuf **pkt)
     uint16_t payload_len = rte_pktmbuf_pkt_len(*pkt);
 	unsigned int id;
 
-	if (hs_scan(database, payload, payload_len, 0, scratch, eventHandler,
-                &id) != HS_SUCCESS) {
+	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
+	if (matchCtx == NULL) {
+            fprintf(stderr, "Error allocating MatchContext\n");
+            hs_free_scratch(scratch);
+            hs_free_database(database);
+            return EXIT_FAILURE;
+    }
+
+	if (hs_scan(database, payload, payload_len, 0, scratch, eventHandler, matchCtx) != HS_SUCCESS) {
         fprintf(stderr, "ERROR: Unable to scan input buffer. Exiting.\n");
         hs_free_scratch(scratch);
         hs_free_database(database);
         return -1;
     }
+
+	if(matchCtx->id == 1)
+	{
+		printf("HTTP GET\n");
+		return HTTP_GET;
+	}
+	else if(matchCtx->id == 2)
+	{
+		printf("TLS CLIENT HELLO\n");
+		return TLS_CLIENT_HELLO;
+	}
+	else
+	{
+		printf("matchCtx.id: %d\n", matchCtx->id);
+		return 0;
+	}
+
+	free(matchCtx);
 }
 // END OF PACKET PROCESSING AND CHECKING
 
@@ -752,19 +787,37 @@ int main(int argc, char *argv[])
     // }
 
 	// Define patterns
-    const char *patterns[] = {"pattern1", "pattern2"}; // Add your patterns
-	const int ids[2] = {0, 1};
-	const unsigned int *flag = HS_FLAG_SINGLEMATCH;
+	// const unsigned int *flag = HS_FLAG_SINGLEMATCH;
     // Compile patterns into Hyperscan database
     hs_compile_error_t *compile_err;
-    if(hs_compile_multi(patterns, flag, NULL, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
+	// const char *expr[] = {"abc", "def", "foobar.*gh", "teakettle{4,10}",
+    //                       "ijkl[mMn]", "(101 & 102 & 103) | (104 & !105)"};
+    unsigned flags[] = {HS_FLAG_SINGLEMATCH,HS_FLAG_SINGLEMATCH};
+    // unsigned ids[] = {101, 102, 103, 104, 105, 1001};
+    // hs_error_t err = hs_compile_multi(expr, flags, ids, 6, HS_MODE_NOSTREAM,
+    //                                   NULL, &database, &compile_err);
+    if(hs_compile_multi(patterns, flags, ids, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
 	{
 		fprintf(stderr, "ERROR: Unable to compile pattern : %s\n", compile_err->message);
 		hs_free_compile_error(compile_err);
 		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
-	
 	}
 
+	// if (hs_compile(pattern2, HS_FLAG_SINGLEMATCH, HS_MODE_BLOCK, NULL, &database,
+    //                &compile_err) != HS_SUCCESS) {
+    //     fprintf(stderr, "ERROR: Unable to compile pattern \"%s\": %s\n",
+    //             pattern, compile_err->message);
+    //     hs_free_compile_error(compile_err);
+    //     rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+    // }
+
+	// if (hs_compile(pattern, HS_FLAG_SINGLEMATCH, HS_MODE_BLOCK, NULL, &database,
+    //                &compile_err) != HS_SUCCESS) {
+    //     fprintf(stderr, "ERROR: Unable to compile pattern \"%s\": %s\n",
+    //             pattern, compile_err->message);
+    //     hs_free_compile_error(compile_err);
+    //     rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+    // }
 
 	printf("Database compiled successfully\n");
 
