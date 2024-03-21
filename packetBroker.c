@@ -30,6 +30,9 @@
 #include <rte_tcp.h>
 #include <rte_pdump.h>
 
+// Hyperscan library
+#include <hs/hs.h>
+
 // ======================================================= THE DEFINE =======================================================
 
 // Define the limit of
@@ -61,6 +64,15 @@ char HOSTNAME[100];
 #define TLS_MAGIC_LEN 3
 #define TLS_CLIENT_HELLO_MAGIC "\x01"
 #define TLS_CLIENT_HELLO_MAGIC_LEN 1
+
+// Hyperscan setup
+hs_database_t *database;
+hs_compile_error_t *compile_err;
+hs_scratch_t *scratch = NULL;
+
+const char *patterns[] = {"GET /", "\x16\x03\x01.{2}\x01"}; // Add your patterns
+const int ids[2] = {0, 1};
+unsigned flags[] = {HS_FLAG_SINGLEMATCH,HS_FLAG_SINGLEMATCH};
 
 // Force quit variable
 static volatile bool force_quit;
@@ -455,6 +467,20 @@ int load_config_file()
 	return 0;
 }
 
+typedef struct {
+    unsigned int id;
+} MatchContext;
+
+static int eventHandler(unsigned int id, unsigned long long from,
+                        unsigned long long to, unsigned int flags, void *ctx) {
+	// printf("id: %d, from: %llu, to: %llu\n", id, from, to);
+    // printf("Match for pattern \"%s\" at offset %llu\n", patterns[id], to);
+	MatchContext *matchCtx = (MatchContext *)ctx;
+	matchCtx->id = id+1;
+	// free(matchCtx);
+    return 0;
+}
+
 /*
  * The packet checker function
  * Check the packet type
@@ -465,60 +491,97 @@ int load_config_file()
  */
 static int packet_checker(struct rte_mbuf **pkt)
 {
-	// Define Variable
-	int sent;
+	// // Define Variable
+	// int sent;
 
-	// Parse Ethernet header
-	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
+	// // Parse Ethernet header
+	// struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
 
-	// Check if it's an IP packet
-	if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4))
+	// // Check if it's an IP packet
+	// if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4))
+	// {
+	// 	// Parse IP header
+	// 	struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
+
+	// 	// Check if it's a TCP packet
+	// 	if (ip_hdr->next_proto_id == IPPROTO_TCP)
+	// 	{
+	// 		// Parse TCP header
+	// 		struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
+
+	// 		// Calculate TCP payload length
+	// 		uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
+
+	// 		// Point to the TCP payload data
+	// 		char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
+
+	// 		// Convert the TCP payload to a string (char array)
+	// 		char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
+	// 		// Copy the TCP payload into the string
+	// 		// Limit the copy to avoid buffer overflow
+	// 		snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
+
+	// 		if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
+	// 		{
+	// 			return HTTP_GET;
+	// 		}
+
+	// 		// Check if the payload contains a TLS handshake message
+	// 		if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
+	// 		{
+	// 			if (tcp_payload[5] == 1)
+	// 			{
+	// 				return TLS_CLIENT_HELLO;
+	// 			}
+	// 		}
+
+	// 		// return if there is no payload
+	// 		return 0;
+	// 	}
+
+	// 	// return if there is no TCP packet
+	// 	return 0;
+	// }
+
+	// // return if there is no IP packet
+	// return 0;
+
+	char *payload = rte_pktmbuf_mtod(*pkt, char *);
+    uint16_t payload_len = rte_pktmbuf_pkt_len(*pkt);
+	unsigned int id;
+
+	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
+	if (matchCtx == NULL) {
+			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to allocating MatchContext\n");
+            hs_free_scratch(scratch);
+            hs_free_database(database);
+            return EXIT_FAILURE;
+    }
+	int ret = hs_scan(database, payload, payload_len, 0, scratch, eventHandler, matchCtx);
+	if (ret != HS_SUCCESS) {
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to scan input buffer. Exiting. (%d)\n",ret);
+        hs_free_scratch(scratch);
+        hs_free_database(database);
+        return -1;
+    }
+
+	if(matchCtx->id == 1)
 	{
-		// Parse IP header
-		struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
-
-		// Check if it's a TCP packet
-		if (ip_hdr->next_proto_id == IPPROTO_TCP)
-		{
-			// Parse TCP header
-			struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
-
-			// Calculate TCP payload length
-			uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
-
-			// Point to the TCP payload data
-			char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
-
-			// Convert the TCP payload to a string (char array)
-			char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-			// Copy the TCP payload into the string
-			// Limit the copy to avoid buffer overflow
-			snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
-
-			if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
-			{
-				return HTTP_GET;
-			}
-
-			// Check if the payload contains a TLS handshake message
-			if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
-			{
-				if (tcp_payload[5] == 1)
-				{
-					return TLS_CLIENT_HELLO;
-				}
-			}
-
-			// return if there is no payload
-			return 0;
-		}
-
-		// return if there is no TCP packet
+		// printf("HTTP GET\n");
+		return HTTP_GET;
+	}
+	else if(matchCtx->id == 2)
+	{
+		// printf("TLS CLIENT HELLO\n");
+		return TLS_CLIENT_HELLO;
+	}
+	else
+	{
+		// printf("matchCtx.id: %d\n", matchCtx->id);
 		return 0;
 	}
 
-	// return if there is no IP packet
-	return 0;
+	free(matchCtx);
 }
 
 /*
@@ -532,6 +595,8 @@ signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM)
 	{
+		hs_free_scratch(scratch);
+        hs_free_database(database);
 		printf("\nSignal %d received, preparing to exit...\n", signum);
 		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
@@ -818,7 +883,7 @@ lcore_stats_process(void)
 		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
 
 		// Print the statistics
-		print_stats(&last_run_print);
+		// print_stats(&last_run_print);
 
 		// Send stats
 		send_stats(jsonArray, &last_run_send);
@@ -1083,6 +1148,14 @@ int main(int argc, char *argv[])
 	{
 		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "lcore must be more than equal 3\n");
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
+	}
+
+	// compile hyperscan database
+	if(hs_compile_multi(patterns, flags, ids, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
+	{
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to compile pattern : %s\n", compile_err->message);
+		hs_free_compile_error(compile_err);
+		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
 	}
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
