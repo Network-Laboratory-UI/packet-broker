@@ -552,8 +552,6 @@ static int packet_checker(struct rte_mbuf *pkt)
 		return EXIT_FAILURE;
 	}
 	payload = rte_pktmbuf_mtod(pkt, char *);
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__,"Payload=%s\n", payload);
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__,"Payload Length=%d\n", payload_len);
 	unsigned int id;
 
 	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
@@ -887,7 +885,7 @@ lcore_stats_process(void)
 		print_stats_file(&last_run_stat, &last_run_file, &f_stat, jsonArray);
 
 		// Print the statistics
-		// print_stats(&last_run_print);
+		print_stats(&last_run_print);
 
 		// Send stats
 		send_stats(jsonArray, &last_run_send);
@@ -1124,7 +1122,7 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, signal_handler);
 
 	// clean the data
-	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
+	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Clean the statistics data\n");
 
 	// count the number of ports to send and receive
@@ -1169,6 +1167,13 @@ int main(int argc, char *argv[])
 		hs_free_compile_error(compile_err);
 		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
 	}
+
+	// initialize scratch to store buffer
+	if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS) {
+        fprintf(stderr, "ERROR: Unable to allocate scratch space. Exiting.\n");
+        hs_free_database(database);
+        rte_exit(EXIT_FAILURE, "Cannot allocate scratch space\n");
+    }
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
