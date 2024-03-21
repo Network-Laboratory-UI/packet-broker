@@ -489,7 +489,7 @@ static int eventHandler(unsigned int id, unsigned long long from,
  * @param nb_rx
  * 	the number of packets
  */
-static int packet_checker(struct rte_mbuf **pkt)
+static int packet_checker(struct rte_mbuf *pkt)
 {
 	// // Define Variable
 	// int sent;
@@ -545,9 +545,15 @@ static int packet_checker(struct rte_mbuf **pkt)
 
 	// // return if there is no IP packet
 	// return 0;
-
-	char *payload = rte_pktmbuf_mtod(*pkt, char *);
-    uint16_t payload_len = rte_pktmbuf_pkt_len(*pkt);
+	uint16_t payload_len = rte_pktmbuf_pkt_len(pkt);
+	char *payload = calloc(payload_len, sizeof(char));
+	if (payload == NULL) {
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to allocating payload\n");
+		return EXIT_FAILURE;
+	}
+	payload = rte_pktmbuf_mtod(pkt, char *);
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__,"Payload=%s\n", payload);
+	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__,"Payload Length=%d\n", payload_len);
 	unsigned int id;
 
 	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
@@ -582,6 +588,7 @@ static int packet_checker(struct rte_mbuf **pkt)
 	}
 
 	free(matchCtx);
+	free(payload);
 }
 
 /*
@@ -772,9 +779,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			// print the header of the statistics file
 			print_stats_csv_header(*f_stat);
 
-			// free the string
-			free(filename);
-
 			// set the last run file
 			*last_run_file = current_min;
 		}
@@ -890,6 +894,12 @@ lcore_stats_process(void)
 
 		usleep(10000);
 	}
+
+	// Close the file
+	if (f_stat)
+	{
+		fclose(f_stat);
+	}
 }
 
 /*
@@ -935,7 +945,7 @@ lcore_main_process(void)
 		{
 
 			// check the packet type
-			packet_type = packet_checker(&bufs[i]);
+			packet_type = packet_checker(bufs[i]);
 
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
@@ -950,6 +960,9 @@ lcore_main_process(void)
 					
 					// get end time to count service time
 					end = clock();
+				}else{
+					// free up the buffer
+					rte_pktmbuf_free(bufs[i]);
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -964,6 +977,9 @@ lcore_main_process(void)
 					
 					// get end time to count service time
 					end = clock();
+				}else{
+					// free up the buffer
+					rte_pktmbuf_free(bufs[i]);
 				}
 			}
 			else
@@ -978,10 +994,6 @@ lcore_main_process(void)
 				end = clock();
 			}
 		}
-
-		// free up the buffer
-		rte_pktmbuf_free(*bufs);
-
 		// get the service time
 		service_time += (double)(end - start) / CLOCKS_PER_SEC;
 		count_service_time += 1;
