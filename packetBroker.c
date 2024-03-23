@@ -491,60 +491,6 @@ static int eventHandler(unsigned int id, unsigned long long from,
  */
 static int packet_checker(struct rte_mbuf *pkt)
 {
-	// // Define Variable
-	// int sent;
-
-	// // Parse Ethernet header
-	// struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
-
-	// // Check if it's an IP packet
-	// if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4))
-	// {
-	// 	// Parse IP header
-	// 	struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
-
-	// 	// Check if it's a TCP packet
-	// 	if (ip_hdr->next_proto_id == IPPROTO_TCP)
-	// 	{
-	// 		// Parse TCP header
-	// 		struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
-
-	// 		// Calculate TCP payload length
-	// 		uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
-
-	// 		// Point to the TCP payload data
-	// 		char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
-
-	// 		// Convert the TCP payload to a string (char array)
-	// 		char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-	// 		// Copy the TCP payload into the string
-	// 		// Limit the copy to avoid buffer overflow
-	// 		snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
-
-	// 		if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
-	// 		{
-	// 			return HTTP_GET;
-	// 		}
-
-	// 		// Check if the payload contains a TLS handshake message
-	// 		if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
-	// 		{
-	// 			if (tcp_payload[5] == 1)
-	// 			{
-	// 				return TLS_CLIENT_HELLO;
-	// 			}
-	// 		}
-
-	// 		// return if there is no payload
-	// 		return 0;
-	// 	}
-
-	// 	// return if there is no TCP packet
-	// 	return 0;
-	// }
-
-	// // return if there is no IP packet
-	// return 0;
 	uint16_t payload_len = rte_pktmbuf_pkt_len(pkt);
 	char *payload = rte_pktmbuf_mtod(pkt, char *);
 	unsigned int id;
