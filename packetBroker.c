@@ -50,20 +50,9 @@ char STAT_FILE[100];
 char STAT_FILE_EXT[100];
 char HOSTNAME[100];
 
-// Define period to print stats
-
 // Define the type of filter
 #define HTTP_GET 112
 #define TLS_CLIENT_HELLO 212
-
-// Define HTTP GET and TLS CLIENT HELLO Pattern
-// add MAGIC for the pattern and MAGIC_LEN for the byte length on variable name
-#define HTTP_GET_MAGIC "GET /"
-#define HTTP_GET_MAGIC_LEN 5
-#define TLS_MAGIC "\x16\x03\x01"
-#define TLS_MAGIC_LEN 3
-#define TLS_CLIENT_HELLO_MAGIC "\x01"
-#define TLS_CLIENT_HELLO_MAGIC_LEN 1
 
 // Hyperscan setup
 hs_database_t *database;
