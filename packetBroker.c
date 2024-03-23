@@ -546,12 +546,7 @@ static int packet_checker(struct rte_mbuf *pkt)
 	// // return if there is no IP packet
 	// return 0;
 	uint16_t payload_len = rte_pktmbuf_pkt_len(pkt);
-	char *payload = calloc(payload_len, sizeof(char));
-	if (payload == NULL) {
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to allocating payload\n");
-		return EXIT_FAILURE;
-	}
-	payload = rte_pktmbuf_mtod(pkt, char *);
+	char *payload = rte_pktmbuf_mtod(pkt, char *);
 	unsigned int id;
 
 	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
@@ -572,21 +567,23 @@ static int packet_checker(struct rte_mbuf *pkt)
 	if(matchCtx->id == 1)
 	{
 		// printf("HTTP GET\n");
+		free(matchCtx);
 		return HTTP_GET;
 	}
 	else if(matchCtx->id == 2)
 	{
 		// printf("TLS CLIENT HELLO\n");
+		free(matchCtx);
 		return TLS_CLIENT_HELLO;
 	}
 	else
 	{
 		// printf("matchCtx.id: %d\n", matchCtx->id);
+		free(matchCtx);
 		return 0;
 	}
 
 	free(matchCtx);
-	free(payload);
 }
 
 /*
@@ -754,7 +751,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			avg_service_time = service_time / count_service_time;
 			service_time = 0;
 			count_service_time = 0;
-			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
 		}
 
 		// print out the stats to csv
@@ -811,11 +807,14 @@ send_stats_to_server(json_t *jsonArray)
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
 		res = curl_easy_perform(curl);
+		long res_code = 0;
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res_code);
 
 		if (res != CURLE_OK)
 		{
-			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
 			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
+		} else if(res_code != 200){
+			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: connection error with code %d\n", size, res_code);
 		} else {
 			if (size < (60 * TIMER_PERIOD_SEND)){
 				logMessage(LOG_LEVEL_WARNING,__FILE__, __LINE__, "Stats data is not normal\n");
