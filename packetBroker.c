@@ -30,6 +30,9 @@
 #include <rte_tcp.h>
 #include <rte_pdump.h>
 
+// Hyperscan library
+#include <hs/hs.h>
+
 // ======================================================= THE DEFINE =======================================================
 
 // Define the limit of
@@ -47,20 +50,18 @@ char STAT_FILE[100];
 char STAT_FILE_EXT[100];
 char HOSTNAME[100];
 
-// Define period to print stats
-
 // Define the type of filter
 #define HTTP_GET 112
 #define TLS_CLIENT_HELLO 212
 
-// Define HTTP GET and TLS CLIENT HELLO Pattern
-// add MAGIC for the pattern and MAGIC_LEN for the byte length on variable name
-#define HTTP_GET_MAGIC "GET /"
-#define HTTP_GET_MAGIC_LEN 5
-#define TLS_MAGIC "\x16\x03\x01"
-#define TLS_MAGIC_LEN 3
-#define TLS_CLIENT_HELLO_MAGIC "\x01"
-#define TLS_CLIENT_HELLO_MAGIC_LEN 1
+// Hyperscan setup
+hs_database_t *database;
+hs_compile_error_t *compile_err;
+hs_scratch_t *scratch = NULL;
+
+const char *patterns[] = {"GET /", "\x16\x03\x01.{2}\x01"}; // Add your patterns
+const int ids[2] = {0, 1};
+unsigned flags[] = {HS_FLAG_SINGLEMATCH,HS_FLAG_SINGLEMATCH};
 
 // Force quit variable
 static volatile bool force_quit;
@@ -455,6 +456,20 @@ int load_config_file()
 	return 0;
 }
 
+typedef struct {
+    unsigned int id;
+} MatchContext;
+
+static int eventHandler(unsigned int id, unsigned long long from,
+                        unsigned long long to, unsigned int flags, void *ctx) {
+	// printf("id: %d, from: %llu, to: %llu\n", id, from, to);
+    // printf("Match for pattern \"%s\" at offset %llu\n", patterns[id], to);
+	MatchContext *matchCtx = (MatchContext *)ctx;
+	matchCtx->id = id+1;
+	// free(matchCtx);
+    return 0;
+}
+
 /*
  * The packet checker function
  * Check the packet type
@@ -463,62 +478,47 @@ int load_config_file()
  * @param nb_rx
  * 	the number of packets
  */
-static int packet_checker(struct rte_mbuf **pkt)
+static int packet_checker(struct rte_mbuf *pkt)
 {
-	// Define Variable
-	int sent;
+	uint16_t payload_len = rte_pktmbuf_pkt_len(pkt);
+	char *payload = rte_pktmbuf_mtod(pkt, char *);
+	unsigned int id;
 
-	// Parse Ethernet header
-	struct rte_ether_hdr *eth_hdr = rte_pktmbuf_mtod(*pkt, struct rte_ether_hdr *);
+	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
+	if (matchCtx == NULL) {
+			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to allocating MatchContext\n");
+            hs_free_scratch(scratch);
+            hs_free_database(database);
+            return EXIT_FAILURE;
+    }
+	int ret = hs_scan(database, payload, payload_len, 0, scratch, eventHandler, matchCtx);
+	if (ret != HS_SUCCESS) {
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to scan input buffer. Exiting. (%d)\n",ret);
+        hs_free_scratch(scratch);
+        hs_free_database(database);
+        return -1;
+    }
 
-	// Check if it's an IP packet
-	if (eth_hdr->ether_type == rte_be_to_cpu_16(RTE_ETHER_TYPE_IPV4))
+	if(matchCtx->id == 1)
 	{
-		// Parse IP header
-		struct rte_ipv4_hdr *ip_hdr = (struct rte_ipv4_hdr *)(eth_hdr + 1);
-
-		// Check if it's a TCP packet
-		if (ip_hdr->next_proto_id == IPPROTO_TCP)
-		{
-			// Parse TCP header
-			struct rte_tcp_hdr *tcp_hdr = (struct rte_tcp_hdr *)((char *)ip_hdr + sizeof(struct rte_ipv4_hdr));
-
-			// Calculate TCP payload length
-			uint16_t tcp_payload_len = rte_be_to_cpu_16(ip_hdr->total_length) - sizeof(struct rte_ipv4_hdr) - sizeof(struct rte_tcp_hdr);
-
-			// Point to the TCP payload data
-			char *tcp_payload = (char *)tcp_hdr + sizeof(struct rte_tcp_hdr);
-
-			// Convert the TCP payload to a string (char array)
-			char tcp_payload_str[MAX_TCP_PAYLOAD_LEN + 1]; // +1 for null-terminator
-			// Copy the TCP payload into the string
-			// Limit the copy to avoid buffer overflow
-			snprintf(tcp_payload_str, sizeof(tcp_payload_str), "%.*s", tcp_payload_len, tcp_payload);
-
-			if (strncmp(tcp_payload_str, HTTP_GET_MAGIC, HTTP_GET_MAGIC_LEN) == 0)
-			{
-				return HTTP_GET;
-			}
-
-			// Check if the payload contains a TLS handshake message
-			if (strncmp(tcp_payload, TLS_MAGIC, TLS_MAGIC_LEN) == 0)
-			{
-				if (tcp_payload[5] == 1)
-				{
-					return TLS_CLIENT_HELLO;
-				}
-			}
-
-			// return if there is no payload
-			return 0;
-		}
-
-		// return if there is no TCP packet
+		// printf("HTTP GET\n");
+		free(matchCtx);
+		return HTTP_GET;
+	}
+	else if(matchCtx->id == 2)
+	{
+		// printf("TLS CLIENT HELLO\n");
+		free(matchCtx);
+		return TLS_CLIENT_HELLO;
+	}
+	else
+	{
+		// printf("matchCtx.id: %d\n", matchCtx->id);
+		free(matchCtx);
 		return 0;
 	}
 
-	// return if there is no IP packet
-	return 0;
+	free(matchCtx);
 }
 
 /*
@@ -532,6 +532,8 @@ signal_handler(int signum)
 {
 	if (signum == SIGINT || signum == SIGTERM)
 	{
+		hs_free_scratch(scratch);
+        hs_free_database(database);
 		printf("\nSignal %d received, preparing to exit...\n", signum);
 		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
@@ -684,7 +686,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 			avg_service_time = service_time / count_service_time;
 			service_time = 0;
 			count_service_time = 0;
-			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "AVG Service Time: %f\n", avg_service_time);
 		}
 
 		// print out the stats to csv
@@ -706,9 +707,6 @@ static void print_stats_file(int *last_run_stat, int *last_run_file, FILE **f_st
 
 			// print the header of the statistics file
 			print_stats_csv_header(*f_stat);
-
-			// free the string
-			free(filename);
 
 			// set the last run file
 			*last_run_file = current_min;
@@ -744,11 +742,14 @@ send_stats_to_server(json_t *jsonArray)
 		curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
 		res = curl_easy_perform(curl);
+		long res_code = 0;
+		curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &res_code);
 
 		if (res != CURLE_OK)
 		{
-			fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
 			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
+		} else if(res_code != 200){
+			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: connection error with code %d\n", size, res_code);
 		} else {
 			if (size < (60 * TIMER_PERIOD_SEND)){
 				logMessage(LOG_LEVEL_WARNING,__FILE__, __LINE__, "Stats data is not normal\n");
@@ -825,6 +826,12 @@ lcore_stats_process(void)
 
 		usleep(10000);
 	}
+
+	// Close the file
+	if (f_stat)
+	{
+		fclose(f_stat);
+	}
 }
 
 /*
@@ -870,7 +877,7 @@ lcore_main_process(void)
 		{
 
 			// check the packet type
-			packet_type = packet_checker(&bufs[i]);
+			packet_type = packet_checker(bufs[i]);
 
 			// function to check the packet type and send it to the right port
 			if (packet_type == HTTP_GET)
@@ -885,6 +892,9 @@ lcore_main_process(void)
 					
 					// get end time to count service time
 					end = clock();
+				}else{
+					// free up the buffer
+					rte_pktmbuf_free(bufs[i]);
 				}
 			}
 			else if (packet_type == TLS_CLIENT_HELLO)
@@ -899,6 +909,9 @@ lcore_main_process(void)
 					
 					// get end time to count service time
 					end = clock();
+				}else{
+					// free up the buffer
+					rte_pktmbuf_free(bufs[i]);
 				}
 			}
 			else
@@ -913,10 +926,6 @@ lcore_main_process(void)
 				end = clock();
 			}
 		}
-
-		// free up the buffer
-		rte_pktmbuf_free(*bufs);
-
 		// get the service time
 		service_time += (double)(end - start) / CLOCKS_PER_SEC;
 		count_service_time += 1;
@@ -1047,7 +1056,7 @@ int main(int argc, char *argv[])
 	signal(SIGTERM, signal_handler);
 
 	// clean the data
-	memset(port_statistics, 0, 32 * sizeof(struct port_statistics_data));
+	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
 	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Clean the statistics data\n");
 
 	// count the number of ports to send and receive
@@ -1084,6 +1093,21 @@ int main(int argc, char *argv[])
 		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "lcore must be more than equal 3\n");
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
 	}
+
+	// compile hyperscan database
+	if(hs_compile_multi(patterns, flags, ids, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
+	{
+		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to compile pattern : %s\n", compile_err->message);
+		hs_free_compile_error(compile_err);
+		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
+	}
+
+	// initialize scratch to store buffer
+	if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS) {
+        fprintf(stderr, "ERROR: Unable to allocate scratch space. Exiting.\n");
+        hs_free_database(database);
+        rte_exit(EXIT_FAILURE, "Cannot allocate scratch space\n");
+    }
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{

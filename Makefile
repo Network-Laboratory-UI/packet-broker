@@ -14,7 +14,7 @@ ifneq ($(shell $(PKGCONF) --exists libdpdk && echo 0),0)
 $(error "no installation of DPDK found")
 endif
 
-all: shared stats logs
+all: static stats logs
 .PHONY: shared static logs
 shared: build/$(APP)-shared
 	ln -sf $(APP)-shared build/$(APP)
@@ -26,9 +26,9 @@ logs:
 	@mkdir -p $@
 
 PC_FILE := $(shell $(PKGCONF) --path libdpdk 2>/dev/null)
-CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk)
+CFLAGS += -O3 $(shell $(PKGCONF) --cflags libdpdk libhs)
 LDFLAGS_SHARED = $(shell $(PKGCONF) --libs libdpdk)
-LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk)
+LDFLAGS_STATIC = $(shell $(PKGCONF) --static --libs libdpdk libhs)
 LDFLAGS_NETWORK = $(shell echo -lcurl -ljansson)
 
 ifeq ($(MAKECMDGOALS),static)
