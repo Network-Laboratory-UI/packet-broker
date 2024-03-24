@@ -43,7 +43,14 @@ uint32_t NUM_MBUFS;
 uint32_t MBUF_CACHE_SIZE;
 uint32_t BURST_SIZE;
 uint32_t MAX_TCP_PAYLOAD_LEN;
+
+// Define the NPB ID
 char NPB_ID[200];
+
+// Define the PORT
+#define PORT_I 0
+#define PORT_O_HTTP 1
+#define PORT_O_TLS 2
 
 // Define the statistics file name
 char STAT_FILE[100];
@@ -58,10 +65,9 @@ char HOSTNAME[100];
 hs_database_t *database;
 hs_compile_error_t *compile_err;
 hs_scratch_t *scratch = NULL;
-
 const char *patterns[] = {"GET /", "\x16\x03\x01.{2}\x01"}; // Add your patterns
 const int ids[2] = {0, 1};
-unsigned flags[] = {HS_FLAG_SINGLEMATCH,HS_FLAG_SINGLEMATCH};
+unsigned flags[] = {HS_FLAG_SINGLEMATCH, HS_FLAG_SINGLEMATCH};
 
 // Force quit variable
 static volatile bool force_quit;
@@ -87,8 +93,9 @@ struct port_statistics_data
 	uint64_t mbuf_err;
 } __rte_cache_aligned;
 struct port_statistics_data port_statistics[RTE_MAX_ETHPORTS];
-struct rte_eth_stats stats_0;
-struct rte_eth_stats stats_1;
+struct rte_eth_stats stats_I;
+struct rte_eth_stats stats_O_HTTP;
+struct rte_eth_stats stats_O_TLS;
 uint64_t httpMatch = 0;
 uint64_t httpsMatch = 0;
 
@@ -107,50 +114,57 @@ int count_service_time = 0;
  * @param format
  * 	the format of the message
  */
-typedef enum {
-    LOG_LEVEL_INFO,
-    LOG_LEVEL_WARNING,
-    LOG_LEVEL_ERROR
+typedef enum
+{
+	LOG_LEVEL_INFO,
+	LOG_LEVEL_WARNING,
+	LOG_LEVEL_ERROR
 } LogLevel;
 
-const char* getLogLevelString(LogLevel level) {
-    switch(level) {
-        case LOG_LEVEL_INFO: return "INFO";
-        case LOG_LEVEL_WARNING: return "WARNING";
-        case LOG_LEVEL_ERROR: return "ERROR";
-        default: return "UNKNOWN";
-    }
+const char *getLogLevelString(LogLevel level)
+{
+	switch (level)
+	{
+	case LOG_LEVEL_INFO:
+		return "INFO";
+	case LOG_LEVEL_WARNING:
+		return "WARNING";
+	case LOG_LEVEL_ERROR:
+		return "ERROR";
+	default:
+		return "UNKNOWN";
+	}
 }
 
 void logMessage(LogLevel level, const char *filename, int line, const char *format, ...)
 {
-    // Open the log file in append mode
-    FILE *file = fopen("logs/log.txt", "a");
-    if (file == NULL)
-    {
-        logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error opening file %s\n", filename);
-        return;
-    }
+	// Open the log file in append mode
+	FILE *file = fopen("logs/log.txt", "a");
+	if (file == NULL)
+	{
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error opening file %s\n", filename);
+		return;
+	}
 
-    // Get the current time
-    time_t rawtime;
-    struct tm *timeinfo;
-    char timestamp[20];
-    time(&rawtime);
-    timeinfo = localtime(&rawtime);
-    strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
+	// Get the current time
+	time_t rawtime;
+	struct tm *timeinfo;
+	char timestamp[20];
+	time(&rawtime);
+	timeinfo = localtime(&rawtime);
+	strftime(timestamp, sizeof(timestamp), "%Y-%m-%d %H:%M:%S", timeinfo);
 
-    // Write the timestamp and log level to the file
-    fprintf(file, "[%s] [%s] [%s:%d] - ", timestamp, getLogLevelString(level), filename, line);
+	// Write the timestamp and log level to the file
+	fprintf(file, "[%s] [%s] [%s:%d] - ", timestamp, getLogLevelString(level), filename, line);
 
-    // Write the formatted message to the file
-    va_list args;
-    va_start(args, format);
-    vfprintf(file, format, args);
-    va_end(args);
+	// Write the formatted message to the file
+	va_list args;
+	va_start(args, format);
+	vfprintf(file, format, args);
+	va_end(args);
 
-    // Close the file
-    fclose(file);
+	// Close the file
+	fclose(file);
 }
 
 /*
@@ -194,7 +208,7 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
 	retval = rte_eth_dev_info_get(port, &dev_info);
 	if (retval != 0)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error during getting device (port %u) info: %s\n",
 				   port, strerror(-retval));
 		return retval;
 	}
@@ -263,11 +277,11 @@ port_init(uint16_t port, struct rte_mempool *mbuf_pool)
  */
 static FILE *open_file(const char *filename)
 {
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Opening file %s\n", filename);
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Opening file %s\n", filename);
 	FILE *f = fopen(filename, "a+");
 	if (f == NULL)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error opening file %s\n", filename);
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error opening file %s\n", filename);
 		rte_exit(EXIT_FAILURE, "Error opening file %s\n", filename);
 	}
 	return f;
@@ -301,7 +315,7 @@ print_stats(int *last_run_print)
 			   TIMER_PERIOD_STATS, TIMER_PERIOD_SEND);
 		printf("\nPort statistics ====================================");
 
-		for (portid = 0; portid < 2; portid++)
+		for (portid = 0; portid < 3; portid++)
 		{
 			printf("\nStatistics for port %u ------------------------------"
 				   "\nPackets sent count: %18" PRIu64
@@ -348,7 +362,7 @@ print_stats(int *last_run_print)
  */
 static void print_stats_csv_header(FILE *f)
 {
-	fprintf(f, "npb_id,http_count,https_count,no_match,rx_0_count,tx_0_count,rx_0_size,tx_0_size,rx_0_drop,rx_0_error,tx_0_error,rx_0_mbuf,rx_1_count,tx_1_count,rx_1_size,tx_1_size,rx_1_drop,rx_1_error,tx_1_error,rx_1_mbuf,time,throughput,service_time\n"); // Header row
+	fprintf(f, "npb_id,http_count,https_count,no_match,rx_i_count,tx_i_count,rx_i_size,tx_i_size,rx_i_drop,rx_i_error,tx_i_error,rx_i_mbuf,rx_o_http_count,tx_o_http_count,rx_o_http_size,tx_o_http_size,rx_o_http_drop,rx_o_http_error,tx_o_http_error,rx_o_http_mbuf,rx_o_tls_count,tx_o_tls_count,rx_o_tls_size,tx_o_tls_size,rx_o_tls_drop,rx_o_tls_error,tx_o_tls_error,rx_o_tls_mbuf,time,throughput_i,throughput_o_http,throughput_o_tls,service_time\n"); // Header row
 }
 
 /*
@@ -360,7 +374,7 @@ static void print_stats_csv_header(FILE *f)
 static void print_stats_csv(FILE *f, char *timestamp)
 {
 	// Write data to the CSV file
-	fprintf(f, "%s,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld,%f\n", NPB_ID, port_statistics[0].httpMatch, port_statistics[0].httpsMatch, port_statistics[0].noMatch, port_statistics[0].rx_count, port_statistics[0].tx_count, port_statistics[0].rx_size, port_statistics[0].tx_size, port_statistics[0].dropped, port_statistics[0].err_rx, port_statistics[0].err_tx, port_statistics[0].mbuf_err, port_statistics[1].rx_count, port_statistics[1].tx_count, port_statistics[1].rx_size, port_statistics[1].tx_size, port_statistics[1].dropped, port_statistics[1].err_rx, port_statistics[1].err_tx, port_statistics[1].mbuf_err, timestamp, port_statistics[1].throughput, avg_service_time);
+	fprintf(f, "%s,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%ld,%s,%ld,%ld,%ld,%f\n", NPB_ID, port_statistics[PORT_I].httpMatch, port_statistics[PORT_I].httpsMatch, port_statistics[PORT_I].noMatch, port_statistics[PORT_I].rx_count, port_statistics[PORT_I].tx_count, port_statistics[PORT_I].rx_size, port_statistics[PORT_I].tx_size, port_statistics[PORT_I].dropped, port_statistics[PORT_I].err_rx, port_statistics[PORT_I].err_tx, port_statistics[PORT_I].mbuf_err, port_statistics[PORT_O_HTTP].rx_count, port_statistics[PORT_O_HTTP].tx_count, port_statistics[PORT_O_HTTP].rx_size, port_statistics[PORT_O_HTTP].tx_size, port_statistics[PORT_O_HTTP].dropped, port_statistics[PORT_O_HTTP].err_rx, port_statistics[PORT_O_HTTP].err_tx, port_statistics[PORT_O_HTTP].mbuf_err,  port_statistics[PORT_O_TLS].rx_count, port_statistics[PORT_O_TLS].tx_count, port_statistics[PORT_O_TLS].rx_size, port_statistics[PORT_O_TLS].tx_size, port_statistics[PORT_O_TLS].dropped, port_statistics[PORT_O_TLS].err_rx, port_statistics[PORT_O_TLS].err_tx, port_statistics[PORT_O_TLS].mbuf_err, timestamp, port_statistics[PORT_I].throughput, port_statistics[PORT_O_HTTP].throughput, port_statistics[PORT_O_TLS].throughput, avg_service_time);
 }
 
 /*
@@ -372,7 +386,7 @@ int load_config_file()
 	FILE *configFile = fopen("config/config.cfg", "r");
 	if (configFile == NULL)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot open the config file\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Cannot open the config file\n");
 		return 1;
 	}
 
@@ -387,67 +401,67 @@ int load_config_file()
 			if (strcmp(key, "MAX_PACKET_LEN") == 0)
 			{
 				MAX_PACKET_LEN = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "MAX_PACKET_LEN: %d\n", MAX_PACKET_LEN);
 			}
 			else if (strcmp(key, "RX_RING_SIZE") == 0)
 			{
 				RX_RING_SIZE = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "RX_RING_SIZE: %d\n", RX_RING_SIZE);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "RX_RING_SIZE: %d\n", RX_RING_SIZE);
 			}
 			else if (strcmp(key, "TX_RING_SIZE") == 0)
 			{
 				TX_RING_SIZE = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TX_RING_SIZE: %d\n", TX_RING_SIZE);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "TX_RING_SIZE: %d\n", TX_RING_SIZE);
 			}
 			else if (strcmp(key, "NUM_MBUFS") == 0)
 			{
 				NUM_MBUFS = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "NUM_MBUFS: %d\n", NUM_MBUFS);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "NUM_MBUFS: %d\n", NUM_MBUFS);
 			}
 			else if (strcmp(key, "MBUF_CACHE_SIZE") == 0)
 			{
 				MBUF_CACHE_SIZE = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "MBUF_CACHE_SIZE: %d\n", MBUF_CACHE_SIZE);
 			}
 			else if (strcmp(key, "BURST_SIZE") == 0)
 			{
 				BURST_SIZE = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "BURST_SIZE: %d\n", BURST_SIZE);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "BURST_SIZE: %d\n", BURST_SIZE);
 			}
 			else if (strcmp(key, "MAX_TCP_PAYLOAD_LEN") == 0)
 			{
 				MAX_TCP_PAYLOAD_LEN = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "MAX_TCP_PAYLOAD_LEN: %d\n", MAX_TCP_PAYLOAD_LEN);
 			}
 			else if (strcmp(key, "STAT_FILE") == 0)
 			{
 				strcpy(STAT_FILE, value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "STAT_FILE: %s\n", STAT_FILE);
 			}
 			else if (strcmp(key, "STAT_FILE_EXT") == 0)
 			{
 				strcpy(STAT_FILE_EXT, value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "STAT_FILE_EXT: %s\n", STAT_FILE_EXT);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_STATS") == 0)
 			{
 				TIMER_PERIOD_STATS = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "TIMER_PERIOD_STATS: %d\n", TIMER_PERIOD_STATS);
 			}
 			else if (strcmp(key, "TIMER_PERIOD_SEND") == 0)
 			{
 				TIMER_PERIOD_SEND = atoi(value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "TIMER_PERIOD_SEND: %d\n", TIMER_PERIOD_SEND);
 			}
 			else if (strcmp(key, "ID_NPB") == 0)
 			{
 				strcpy(NPB_ID, value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "NPB ID: %s\n", NPB_ID);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "NPB ID: %s\n", NPB_ID);
 			}
 			else if (strcmp(key, "HOSTNAME") == 0)
 			{
 				strcpy(HOSTNAME, value);
-				logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "HOSTNAME: %s\n", HOSTNAME);
+				logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "HOSTNAME: %s\n", HOSTNAME);
 			}
 		}
 	}
@@ -456,18 +470,20 @@ int load_config_file()
 	return 0;
 }
 
-typedef struct {
-    unsigned int id;
+typedef struct
+{
+	unsigned int id;
 } MatchContext;
 
 static int eventHandler(unsigned int id, unsigned long long from,
-                        unsigned long long to, unsigned int flags, void *ctx) {
+						unsigned long long to, unsigned int flags, void *ctx)
+{
 	// printf("id: %d, from: %llu, to: %llu\n", id, from, to);
-    // printf("Match for pattern \"%s\" at offset %llu\n", patterns[id], to);
+	// printf("Match for pattern \"%s\" at offset %llu\n", patterns[id], to);
 	MatchContext *matchCtx = (MatchContext *)ctx;
-	matchCtx->id = id+1;
+	matchCtx->id = id + 1;
 	// free(matchCtx);
-    return 0;
+	return 0;
 }
 
 /*
@@ -485,27 +501,29 @@ static int packet_checker(struct rte_mbuf *pkt)
 	unsigned int id;
 
 	MatchContext *matchCtx = (MatchContext *)malloc(sizeof(MatchContext));
-	if (matchCtx == NULL) {
-			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to allocating MatchContext\n");
-            hs_free_scratch(scratch);
-            hs_free_database(database);
-            return EXIT_FAILURE;
-    }
+	if (matchCtx == NULL)
+	{
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Unable to allocating MatchContext\n");
+		hs_free_scratch(scratch);
+		hs_free_database(database);
+		return EXIT_FAILURE;
+	}
 	int ret = hs_scan(database, payload, payload_len, 0, scratch, eventHandler, matchCtx);
-	if (ret != HS_SUCCESS) {
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to scan input buffer. Exiting. (%d)\n",ret);
-        hs_free_scratch(scratch);
-        hs_free_database(database);
-        return -1;
-    }
+	if (ret != HS_SUCCESS)
+	{
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Unable to scan input buffer. Exiting. (%d)\n", ret);
+		hs_free_scratch(scratch);
+		hs_free_database(database);
+		return -1;
+	}
 
-	if(matchCtx->id == 1)
+	if (matchCtx->id == 1)
 	{
 		// printf("HTTP GET\n");
 		free(matchCtx);
 		return HTTP_GET;
 	}
-	else if(matchCtx->id == 2)
+	else if (matchCtx->id == 2)
 	{
 		// printf("TLS CLIENT HELLO\n");
 		free(matchCtx);
@@ -533,9 +551,9 @@ signal_handler(int signum)
 	if (signum == SIGINT || signum == SIGTERM)
 	{
 		hs_free_scratch(scratch);
-        hs_free_database(database);
+		hs_free_database(database);
 		printf("\nSignal %d received, preparing to exit...\n", signum);
-		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
+		logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Signal %d received, preparing to exit...\n", signum);
 		force_quit = true;
 	}
 }
@@ -548,27 +566,38 @@ populate_json_array(json_t *jsonArray, char *timestamp)
 
 	// Populate the JSON object
 	json_object_set(jsonObject, "npb_id", json_string(NPB_ID));
-	json_object_set(jsonObject, "http_count", json_integer(port_statistics[0].httpMatch));
-	json_object_set(jsonObject, "https_count", json_integer(port_statistics[0].httpsMatch));
-	json_object_set(jsonObject, "no_match", json_integer(port_statistics[0].noMatch));
-	json_object_set(jsonObject, "rx_0_count", json_integer(port_statistics[0].rx_count));
-	json_object_set(jsonObject, "tx_0_count", json_integer(port_statistics[0].tx_count));
-	json_object_set(jsonObject, "rx_0_size", json_integer(port_statistics[0].rx_size));
-	json_object_set(jsonObject, "tx_0_size", json_integer(port_statistics[0].tx_size));
-	json_object_set(jsonObject, "rx_0_drop", json_integer(port_statistics[0].dropped));
-	json_object_set(jsonObject, "rx_0_error", json_integer(port_statistics[0].err_rx));
-	json_object_set(jsonObject, "tx_0_error", json_integer(port_statistics[0].err_tx));
-	json_object_set(jsonObject, "rx_0_mbuf", json_integer(port_statistics[0].mbuf_err));
-	json_object_set(jsonObject, "rx_1_count", json_integer(port_statistics[1].rx_count));
-	json_object_set(jsonObject, "tx_1_count", json_integer(port_statistics[1].tx_count));
-	json_object_set(jsonObject, "rx_1_size", json_integer(port_statistics[1].rx_size));
-	json_object_set(jsonObject, "tx_1_size", json_integer(port_statistics[1].tx_size));
-	json_object_set(jsonObject, "rx_1_drop", json_integer(port_statistics[1].dropped));
-	json_object_set(jsonObject, "rx_1_error", json_integer(port_statistics[1].err_rx));
-	json_object_set(jsonObject, "tx_1_error", json_integer(port_statistics[1].err_tx));
-	json_object_set(jsonObject, "rx_1_mbuf", json_integer(port_statistics[1].mbuf_err));
+	json_object_set(jsonObject, "http_count", json_integer(port_statistics[PORT_I].httpMatch));
+	json_object_set(jsonObject, "https_count", json_integer(port_statistics[PORT_I].httpsMatch));
+	json_object_set(jsonObject, "no_match", json_integer(port_statistics[PORT_I].noMatch));
+	json_object_set(jsonObject, "rx_i_count", json_integer(port_statistics[PORT_I].rx_count));
+	json_object_set(jsonObject, "tx_i_count", json_integer(port_statistics[PORT_I].tx_count));
+	json_object_set(jsonObject, "rx_i_size", json_integer(port_statistics[PORT_I].rx_size));
+	json_object_set(jsonObject, "tx_i_size", json_integer(port_statistics[PORT_I].tx_size));
+	json_object_set(jsonObject, "rx_i_drop", json_integer(port_statistics[PORT_I].dropped));
+	json_object_set(jsonObject, "rx_i_error", json_integer(port_statistics[PORT_I].err_rx));
+	json_object_set(jsonObject, "tx_i_error", json_integer(port_statistics[PORT_I].err_tx));
+	json_object_set(jsonObject, "rx_i_mbuf", json_integer(port_statistics[PORT_I].mbuf_err));
+	json_object_set(jsonObject, "rx_o_http_count", json_integer(port_statistics[PORT_O_HTTP].rx_count));
+	json_object_set(jsonObject, "tx_o_http_count", json_integer(port_statistics[PORT_O_HTTP].tx_count));
+	json_object_set(jsonObject, "rx_o_http_size", json_integer(port_statistics[PORT_O_HTTP].rx_size));
+	json_object_set(jsonObject, "tx_o_http_size", json_integer(port_statistics[PORT_O_HTTP].tx_size));
+	json_object_set(jsonObject, "rx_o_http_drop", json_integer(port_statistics[PORT_O_HTTP].dropped));
+	json_object_set(jsonObject, "rx_o_http_error", json_integer(port_statistics[PORT_O_HTTP].err_rx));
+	json_object_set(jsonObject, "tx_o_http_error", json_integer(port_statistics[PORT_O_HTTP].err_tx));
+	json_object_set(jsonObject, "rx_o_http_mbuf", json_integer(port_statistics[PORT_O_HTTP].mbuf_err));
+	json_object_set(jsonObject, "rx_o_tls_count", json_integer(port_statistics[PORT_O_TLS].rx_count));
+	json_object_set(jsonObject, "tx_o_tls_count", json_integer(port_statistics[PORT_O_TLS].tx_count));
+	json_object_set(jsonObject, "rx_o_tls_size", json_integer(port_statistics[PORT_O_TLS].rx_size));
+	json_object_set(jsonObject, "tx_o_tls_size", json_integer(port_statistics[PORT_O_TLS].tx_size));
+	json_object_set(jsonObject, "rx_o_tls_drop", json_integer(port_statistics[PORT_O_TLS].dropped));
+	json_object_set(jsonObject, "rx_o_tls_error", json_integer(port_statistics[PORT_O_TLS].err_rx));
+	json_object_set(jsonObject, "tx_o_tls_error", json_integer(port_statistics[PORT_O_TLS].err_tx));
+	json_object_set(jsonObject, "rx_o_tls_mbuf", json_integer(port_statistics[PORT_O_TLS].mbuf_err));
 	json_object_set(jsonObject, "time", json_string(timestamp));
-	json_object_set(jsonObject, "throughput", json_integer(port_statistics[1].throughput));
+	json_object_set(jsonObject, "throughput_i", json_integer(port_statistics[PORT_I].throughput));
+	json_object_set(jsonObject, "throughput_o_http", json_integer(port_statistics[PORT_O_HTTP].throughput));
+	json_object_set(jsonObject, "throughput_o_tls", json_integer(port_statistics[PORT_O_TLS].throughput));
+	json_object_set(jsonObject, "service_time", json_real(avg_service_time));
 
 	// Append the JSON object to the JSON array
 	json_array_append(jsonArray, jsonObject);
@@ -578,38 +607,48 @@ static void
 collect_stats()
 {
 	// Get the statistics
-	rte_eth_stats_get(1, &stats_1);
-	rte_eth_stats_get(0, &stats_0);
+	rte_eth_stats_get(PORT_I, &stats_I);
+	rte_eth_stats_get(PORT_O_HTTP, &stats_O_HTTP);
+	rte_eth_stats_get(PORT_O_TLS, &stats_O_TLS);
 
 	// Update the statistics
-	port_statistics[1].rx_count = stats_1.ipackets;
-	port_statistics[1].tx_count = stats_1.opackets;
-	port_statistics[1].rx_size = stats_1.ibytes;
-	port_statistics[1].tx_size = stats_1.obytes;
-	port_statistics[1].dropped = stats_1.imissed;
-	port_statistics[1].err_rx = stats_1.ierrors;
-	port_statistics[1].err_tx = stats_1.oerrors;
-	port_statistics[1].mbuf_err = stats_1.rx_nombuf;
-	port_statistics[0].rx_count = stats_0.ipackets;
-	port_statistics[0].tx_count = stats_0.opackets;
-	port_statistics[0].rx_size = stats_0.ibytes;
-	port_statistics[0].tx_size = stats_0.obytes;
-	port_statistics[0].dropped = stats_0.imissed;
-	port_statistics[0].err_rx = stats_0.ierrors;
-	port_statistics[0].err_tx = stats_0.oerrors;
-	port_statistics[0].mbuf_err = stats_0.rx_nombuf;
-	port_statistics[0].httpMatch = httpMatch;
-	port_statistics[0].httpsMatch = httpsMatch;
-
+	port_statistics[PORT_I].rx_count = stats_I.ipackets;
+	port_statistics[PORT_I].tx_count = stats_I.opackets;
+	port_statistics[PORT_I].rx_size = stats_I.ibytes;
+	port_statistics[PORT_I].tx_size = stats_I.obytes;
+	port_statistics[PORT_I].dropped = stats_I.imissed;
+	port_statistics[PORT_I].err_rx = stats_I.ierrors;
+	port_statistics[PORT_I].err_tx = stats_I.oerrors;
+	port_statistics[PORT_I].mbuf_err = stats_I.rx_nombuf;
+	port_statistics[PORT_I].httpMatch = httpMatch;
+	port_statistics[PORT_I].httpsMatch = httpsMatch;
+	port_statistics[PORT_O_HTTP].rx_count = stats_O_HTTP.ipackets;
+	port_statistics[PORT_O_HTTP].tx_count = stats_O_HTTP.opackets;
+	port_statistics[PORT_O_HTTP].rx_size = stats_O_HTTP.ibytes;
+	port_statistics[PORT_O_HTTP].tx_size = stats_O_HTTP.obytes;
+	port_statistics[PORT_O_HTTP].dropped = stats_O_HTTP.imissed;
+	port_statistics[PORT_O_HTTP].err_rx = stats_O_HTTP.ierrors;
+	port_statistics[PORT_O_HTTP].err_tx = stats_O_HTTP.oerrors;
+	port_statistics[PORT_O_HTTP].mbuf_err = stats_O_HTTP.rx_nombuf;
+	port_statistics[PORT_O_TLS].rx_count = stats_O_TLS.ipackets;
+	port_statistics[PORT_O_TLS].tx_count = stats_O_TLS.opackets;
+	port_statistics[PORT_O_TLS].rx_size = stats_O_TLS.ibytes;
+	port_statistics[PORT_O_TLS].tx_size = stats_O_TLS.obytes;
+	port_statistics[PORT_O_TLS].dropped = stats_O_TLS.imissed;
+	port_statistics[PORT_O_TLS].err_rx = stats_O_TLS.ierrors;
+	port_statistics[PORT_O_TLS].err_tx = stats_O_TLS.oerrors;
+	port_statistics[PORT_O_TLS].mbuf_err = stats_O_TLS.rx_nombuf;
 	// Clear the statistics
-	rte_eth_stats_reset(0);
-	rte_eth_stats_reset(1);
+	rte_eth_stats_reset(PORT_I);
+	rte_eth_stats_reset(PORT_O_HTTP);
+	rte_eth_stats_reset(PORT_O_TLS);
 	httpMatch = 0;
 	httpsMatch = 0;
 
 	// Calculate the throughput
-	port_statistics[1].throughput = port_statistics[1].rx_size / TIMER_PERIOD_STATS;
-	port_statistics[0].throughput = port_statistics[0].tx_size / TIMER_PERIOD_STATS;
+	port_statistics[PORT_I].throughput = port_statistics[PORT_I].rx_size / TIMER_PERIOD_STATS;
+	port_statistics[PORT_O_HTTP].throughput = port_statistics[PORT_O_HTTP].tx_size / TIMER_PERIOD_STATS;
+	port_statistics[PORT_O_TLS].throughput = port_statistics[PORT_O_TLS].tx_size / TIMER_PERIOD_STATS;
 }
 
 /*
@@ -747,19 +786,24 @@ send_stats_to_server(json_t *jsonArray)
 
 		if (res != CURLE_OK)
 		{
-			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
-		} else if(res_code != 200){
-			logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Send %d Stats failed: connection error with code %d\n", size, res_code);
-		} else {
-			if (size < (60 * TIMER_PERIOD_SEND)){
-				logMessage(LOG_LEVEL_WARNING,__FILE__, __LINE__, "Stats data is not normal\n");
+			logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Send %d Stats failed: %s\n", size, curl_easy_strerror(res));
+		}
+		else if (res_code != 200)
+		{
+			logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Send %d Stats failed: connection error with code %d\n", size, res_code);
+		}
+		else
+		{
+			if (size < (60 * TIMER_PERIOD_SEND))
+			{
+				logMessage(LOG_LEVEL_WARNING, __FILE__, __LINE__, "Stats data is not normal\n");
 			}
-			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Send %d Stats success\n", size);
+			logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Send %d Stats success\n", size);
+			free(jsonString);
 		}
 
 		curl_slist_free_all(headers);
 		curl_easy_cleanup(curl);
-		free(jsonString);
 		json_array_clear(jsonArray);
 	}
 
@@ -781,7 +825,7 @@ send_stats(json_t *jsonArray, int *last_run_send)
 	if (current_min % TIMER_PERIOD_SEND == 0 && current_min != *last_run_send)
 	{
 		// send the statistics to the server
-		logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Start sending statistics to server\n");
+		logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Start sending statistics to server\n");
 		send_stats_to_server(jsonArray);
 		*last_run_send = current_min;
 	}
@@ -811,7 +855,7 @@ lcore_stats_process(void)
 	FILE *f_stat = NULL;							 // File pointer for statistics
 	json_t *jsonArray = json_array();				 // JSON array for statistics
 
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting stats process in %d\n", rte_lcore_id());
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Starting stats process in %d\n", rte_lcore_id());
 
 	while (!force_quit)
 	{
@@ -823,8 +867,6 @@ lcore_stats_process(void)
 
 		// Send stats
 		send_stats(jsonArray, &last_run_send);
-
-		usleep(10000);
 	}
 
 	// Close the file
@@ -854,7 +896,7 @@ lcore_main_process(void)
 
 	printf("\nCore %u forwarding packets. [Ctrl+C to quit]\n",
 		   rte_lcore_id());
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Starting main process in %d\n", rte_lcore_id());
 
 	// Main work of application loop
 	while (!force_quit)
@@ -864,8 +906,8 @@ lcore_main_process(void)
 
 		// Get burst of RX packets, from first port of pair
 		struct rte_mbuf *bufs[BURST_SIZE];
-		
-		const uint16_t nb_rx = rte_eth_rx_burst(1, 0,
+
+		const uint16_t nb_rx = rte_eth_rx_burst(PORT_I, 0,
 												bufs, BURST_SIZE);
 
 		// if there is no packet, continue
@@ -883,16 +925,18 @@ lcore_main_process(void)
 			if (packet_type == HTTP_GET)
 			{
 				// send the packet to port 0 if HTTP GET
-				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
+				sent = rte_eth_tx_burst(PORT_O_HTTP, 0, &bufs[i], 1);
 
 				// update the statistics
 				if (sent)
 				{
 					httpMatch += sent;
-					
+
 					// get end time to count service time
 					end = clock();
-				}else{
+				}
+				else
+				{
 					// free up the buffer
 					rte_pktmbuf_free(bufs[i]);
 				}
@@ -900,16 +944,18 @@ lcore_main_process(void)
 			else if (packet_type == TLS_CLIENT_HELLO)
 			{
 				// send the packet to port 0 if TLS CLIENT HELLO
-				sent = rte_eth_tx_burst(0, 0, &bufs[i], 1);
+				sent = rte_eth_tx_burst(PORT_O_TLS, 0, &bufs[i], 1);
 
 				// update the statistics
 				if (sent)
 				{
 					httpsMatch += sent;
-					
+
 					// get end time to count service time
 					end = clock();
-				}else{
+				}
+				else
+				{
 					// free up the buffer
 					rte_pktmbuf_free(bufs[i]);
 				}
@@ -947,7 +993,7 @@ lcore_main_process(void)
 size_t write_callback(void *contents, size_t size, size_t nmemb, void *userp)
 {
 	size_t real_size = size * nmemb;
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Heartbeat Response: %.*s \n", (int)real_size, (char *)contents);
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Heartbeat Response: %.*s \n", (int)real_size, (char *)contents);
 	return real_size;
 }
 
@@ -996,7 +1042,7 @@ lcore_heartbeat_process()
 
 			if (res != CURLE_OK)
 			{
-				logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
+				logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Heartbeat failed: %s\n", curl_easy_strerror(res));
 			}
 			sleep(5);
 		}
@@ -1029,21 +1075,21 @@ int main(int argc, char *argv[])
 	unsigned lcore_id, lcore_main = 0, lcore_stats = 0;
 
 	// log the starting of the application
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Starting the application\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Starting the application\n");
 
 	// load the config file
 	if (load_config_file())
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot load the config file\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Cannot load the config file\n");
 		rte_exit(EXIT_FAILURE, "Cannot load the config file\n");
 	}
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Load config done\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Load config done\n");
 
 	// Initializion the Environment Abstraction Layer (EAL)
 	int ret = rte_eal_init(argc, argv);
 	if (ret < 0)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error with EAL initialization\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error with EAL initialization\n");
 		rte_exit(EXIT_FAILURE, "Error with EAL initialization\n");
 	}
 
@@ -1057,13 +1103,13 @@ int main(int argc, char *argv[])
 
 	// clean the data
 	memset(port_statistics, 0, RTE_MAX_ETHPORTS * sizeof(struct port_statistics_data));
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Clean the statistics data\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Clean the statistics data\n");
 
 	// count the number of ports to send and receive
 	nb_ports = rte_eth_dev_count_avail();
-	if (nb_ports < 2 || (nb_ports & 1))
+	if (nb_ports < 3)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Error: number of ports must be even\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Error: number of ports must be even\n");
 		rte_exit(EXIT_FAILURE, "Error: number of ports must be even\n");
 	}
 
@@ -1074,40 +1120,41 @@ int main(int argc, char *argv[])
 	// check the mempool allocation
 	if (mbuf_pool == NULL)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot create mbuf pool\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Cannot create mbuf pool\n");
 		rte_exit(EXIT_FAILURE, "Cannot create mbuf pool\n");
 	}
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Create mbuf pool done\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Create mbuf pool done\n");
 
 	// initializing ports
 	RTE_ETH_FOREACH_DEV(portid)
 	if (port_init(portid, mbuf_pool) != 0)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Cannot init port %" PRIu16 "\n", portid);
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Cannot init port %" PRIu16 "\n", portid);
 		rte_exit(EXIT_FAILURE, "Cannot init port %" PRIu16 "\n", portid);
 	}
 
 	// count the number of lcore
 	if (rte_lcore_count() < 3)
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "lcore must be more than equal 3\n");
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "lcore must be more than equal 3\n");
 		rte_exit(EXIT_FAILURE, "lcore must be more than equal 3\n");
 	}
 
 	// compile hyperscan database
-	if(hs_compile_multi(patterns, flags, ids, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
+	if (hs_compile_multi(patterns, flags, ids, 2, HS_MODE_BLOCK, NULL, &database, &compile_err))
 	{
-		logMessage(LOG_LEVEL_ERROR,__FILE__, __LINE__, "Unable to compile pattern : %s\n", compile_err->message);
+		logMessage(LOG_LEVEL_ERROR, __FILE__, __LINE__, "Unable to compile pattern : %s\n", compile_err->message);
 		hs_free_compile_error(compile_err);
 		rte_exit(EXIT_FAILURE, "Cannot compile pattern\n");
 	}
 
 	// initialize scratch to store buffer
-	if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS) {
-        fprintf(stderr, "ERROR: Unable to allocate scratch space. Exiting.\n");
-        hs_free_database(database);
-        rte_exit(EXIT_FAILURE, "Cannot allocate scratch space\n");
-    }
+	if (hs_alloc_scratch(database, &scratch) != HS_SUCCESS)
+	{
+		fprintf(stderr, "ERROR: Unable to allocate scratch space. Exiting.\n");
+		hs_free_database(database);
+		rte_exit(EXIT_FAILURE, "Cannot allocate scratch space\n");
+	}
 
 	RTE_LCORE_FOREACH_WORKER(lcore_id)
 	{
@@ -1119,29 +1166,29 @@ int main(int argc, char *argv[])
 		if (lcore_main == 0)
 		{
 			lcore_main = lcore_id;
-			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Main on core %u\n", lcore_id);
+			logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Main on core %u\n", lcore_id);
 			continue;
 		}
 		if (lcore_stats == 0)
 		{
 			lcore_stats = lcore_id;
-			logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Stats on core %u\n", lcore_id);
+			logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Stats on core %u\n", lcore_id);
 			continue;
 		}
 	}
 
 	// run the lcore main function
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the lcore main function\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Run the lcore main function\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_main_process,
 						  NULL, lcore_main);
 
 	// run the stats
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the stats\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Run the stats\n");
 	rte_eal_remote_launch((lcore_function_t *)lcore_stats_process,
 						  NULL, lcore_stats);
 
 	// run the heartbeat
-	logMessage(LOG_LEVEL_INFO,__FILE__, __LINE__, "Run the heartbeat\n");
+	logMessage(LOG_LEVEL_INFO, __FILE__, __LINE__, "Run the heartbeat\n");
 	lcore_heartbeat_process();
 
 	// wait all lcore stopped
